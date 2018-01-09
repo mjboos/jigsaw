@@ -9,89 +9,39 @@ import pandas as pd, numpy as np
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.model_selection import cross_val_score
-
 import helpers as hlp
-
-from nltk.tokenize import word_tokenize
-# Tweet tokenizer does not split at apostophes which is what we want
-from nltk.tokenize import TweetTokenizer
-from nltk import pos_tag
-from nltk.stem.wordnet import WordNetLemmatizer
-from nltk.corpus import stopwords
-import re, string
-lem = WordNetLemmatizer()
-tokenizer=TweetTokenizer()
-eng_stopwords = set(stopwords.words("english"))
+import models
+import preprocessing as pre
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
-#TODO: column-wise logloss as validation
-#TODO: feature engineering for labels
-#TODO: dlib's hyper parameter search
-#TODO: GP modelling of test set
-#TODO: GloVe
+def fit_model_and_predict(model_name, pipeline, train_X, train_y, test_X, **fit_params):
+    pipeline.fit(train_X, train_y, **fit_params)
+    probas = np.concatenate([proba[:,1][:,None] for proba in estimator.predict_proba(test_tf)], axis=-1)
 
-#TODO: what more can be done for cleaning?
-def clean_comment(comment):
-    """
-    This function receives comments and returns a cleaned sentence
-    """
-    #Convert to lower case , so that Hi and hi are the same
-    comment=comment.lower()
-    #remove \n
-    comment=re.sub("\\n","",comment)
-    # remove leaky elements like ip,user
-    #removing usernames
-    comment=re.sub("\[\[.*\]","",comment)
-    #Split the sentences into words
-    words=tokenizer.tokenize(comment)
-    # (')aphostophe  replacement (ie)   you're --> you are
-#    words=[APPO[word] if word in APPO else word for word in words]
-    words=[lem.lemmatize(word, "v") for word in words]
-    words = [w for w in words if not w in eng_stopwords]
-    clean_sent=" ".join(words)
-    return(clean_sent)
 
-@memory.cache
-def data_preprocessing(df):
-    COMMENT = 'comment_text'
-    df[COMMENT].fillna("unknown", inplace=True)
-    df[COMMENT] = df[COMMENT].apply(clean_comment)
-    return df
+def fit_keras_model(train_X, train_y, model_args={}, pre_args={}, fit_args={}):
+    model = models.keras_token_BiLSTM(pre_args=pre_args, **model_args)
+    model.fit(train_X, train_y, **fit_args)
+    return model
 
-def load_data(name='train.csv', preprocess=True):
-    data = pd.read_csv('../input/{}'.format(name))
-    if preprocess:
-        data = data_preprocessing(data)
-    text = data['comment_text']
-    labels = data.iloc[:, 2:]
-    return text, labels
 
-# TODO: change tokenize, check feature enginnering of tfidf features
-def get_tfidf_features(text):
-    '''returns tfidf features'''
-    re_tok = re.compile('([{}“”¨«»®´·º½¾¿¡§£₤‘’])'.format(string.punctuation))
-    def tokenize(s):
-        return re_tok.sub(r' \1 ', s).split()
-    vec = TfidfVectorizer(ngram_range=(1,2), tokenizer=tokenize,
-                   min_df=3, max_df=0.9, strip_accents='unicode', use_idf=1,
-                   smooth_idf=1, sublinear_tf=1 )
-    return vec.fit(text)
+best_weights_path="weights_base.best.hdf5"
+checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+early = EarlyStopping(monitor="val_loss", mode="min", patience=20)
+callbacks_list = [checkpoint, early] #early
 
-def validate_model(estimator, X, y, cv=10, **kwargs):
-    '''Validate mean log loss of model'''
-    scores = cross_val_score(estimator, X, y, scoring=hlp.mean_log_loss, cv=cv, **kwargs)
-    return scores
+fit_args_keras = {'BiLSTM__batch_size' : 32, 'BiLSTM__epochs' : 2,
+                  'BiLSTM__validation_split' : 0.1, 'BiLSTM__callbacks' : callbacks_list}
 
-train_text, train_labels = load_data()
-test_text, test_labels = load_data('test.csv')
+train_text, train_labels = pre.load_data()
+test_text, test_labels = pre.load_data('test.csv')
 
 train_y, test_y = train_labels.values, test_labels.values
 
-tfidf_vec = get_tfidf_features(train_text)
-train_tf = tfidf_vec.transform(train_text)
-test_tf = tfidf_vec.transform(test_text)
-
-estimator = MultiOutputClassifier(hlp.NBMLR())
-scores = validate_model(estimator, train_tf, train_y)
-estimator.fit(train_tf, train_labels)
-write_model(estimator, test_tf)
+## keras model
+model = models.keras_token_BiLSTM()
+model.fit(train_text, train_y, **fit_args_keras)
+model.named_steps['BiLSTM'].load_weights(best_weights_path)
+predictions = model.predict(test_text)
+hlp.write_model(predictions)
