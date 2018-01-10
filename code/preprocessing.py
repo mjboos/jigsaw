@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import joblib
 import pandas as pd, numpy as np
 import helpers as hlp
-
+from keras.preprocessing import text, sequence
 from nltk.tokenize import word_tokenize
 # Tweet tokenizer does not split at apostophes which is what we want
 from nltk.tokenize import TweetTokenizer
@@ -15,6 +15,7 @@ from nltk import pos_tag
 from nltk.stem.wordnet import WordNetLemmatizer
 from nltk.corpus import stopwords
 import re, string
+from sklearn.base import BaseEstimator, TransformerMixin
 lem = WordNetLemmatizer()
 tokenizer=TweetTokenizer()
 eng_stopwords = set(stopwords.words("english"))
@@ -42,15 +43,15 @@ def clean_comment(comment):
     words=tokenizer.tokenize(comment)
     # (')aphostophe  replacement (ie)   you're --> you are
 #    words=[APPO[word] if word in APPO else word for word in words]
-    words=[lem.lemmatize(word, "v") for word in words]
-    words = [w for w in words if not w in eng_stopwords]
+#    words=[lem.lemmatize(word, "v") for word in words]
+#    words = [w for w in words if not w in eng_stopwords]
     clean_sent=" ".join(words)
     return(clean_sent)
 
 @memory.cache
 def data_preprocessing(df):
     COMMENT = 'comment_text'
-    df[COMMENT].fillna("unknown", inplace=True)
+    df[COMMENT].fillna("CvXtZ", inplace=True)
     df[COMMENT] = df[COMMENT].apply(clean_comment)
     return df
 
@@ -81,3 +82,16 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
     from sklearn.preprocessing import FunctionTransformer
     from keras.preprocessing import sequence
     return FunctionTransformer(sequence.pad_sequences, accept_sparse=True)
+
+class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
+    def __init__(self, max_features=20000, maxlen=200):
+        self.max_features = max_features
+        self.maxlen = maxlen
+        self.tokenizer = text.Tokenizer(num_words=max_features)
+
+    def fit(self, list_of_sentences, y=None, **kwargs):
+        self.tokenizer.fit_on_texts(list(list_of_sentences))
+        return self
+
+    def transform(self, list_of_sentences):
+        return sequence.pad_sequences(self.tokenizer.texts_to_sequences(list_of_sentences), maxlen=self.maxlen)

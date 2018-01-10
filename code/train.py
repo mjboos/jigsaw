@@ -13,6 +13,7 @@ import helpers as hlp
 import models
 import preprocessing as pre
 from keras.callbacks import EarlyStopping, ModelCheckpoint
+import json
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
 def fit_model_and_predict(model_name, pipeline, train_X, train_y, test_X, **fit_params):
@@ -31,17 +32,37 @@ checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, s
 early = EarlyStopping(monitor="val_loss", mode="min", patience=20)
 callbacks_list = [checkpoint, early] #early
 
-fit_args_keras = {'BiLSTM__batch_size' : 32, 'BiLSTM__epochs' : 2,
-                  'BiLSTM__validation_split' : 0.1, 'BiLSTM__callbacks' : callbacks_list}
+fit_args = {'batch_size' : 256, 'epochs' : 5,
+                  'validation_split' : 0.1, 'callbacks' : callbacks_list}
 
 train_text, train_labels = pre.load_data()
 test_text, test_labels = pre.load_data('test.csv')
 
 train_y, test_y = train_labels.values, test_labels.values
 
-## keras model
-model = models.keras_token_BiLSTM()
-model.fit(train_text, train_y, **fit_args_keras)
-model.named_steps['BiLSTM'].load_weights(best_weights_path)
-predictions = model.predict(test_text)
-hlp.write_model(predictions)
+## token BiLSTM
+def train_token_BiLSTM():
+    model = models.keras_token_BiLSTM()
+    model.fit(train_text, train_y, **fit_args)
+    model.named_steps['BiLSTM'].load_weights(best_weights_path)
+    predictions = model.predict(test_text)
+    hlp.write_model(predictions)
+
+## Glove BiLSTM
+def train_glove_BiLSTM(**kwargs):
+#    with open('../parameters/glove_bilstm.json','r') as params_file:
+#        model_args = json.load(params_file)
+#    with open('../parameters/glove_bilstm_fit.json', 'r') as fit_file:
+#        fit_args = json.load(fit_file)
+#    model = models.keras_glove_BiLSTM(train_text, **kwargs)
+    model = models.GloVe_BiLSTM(**kwargs)
+    model.fit(train_text, train_y, **fit_args)
+    model.model.load_weights(best_weights_path)
+    predictions = model.predict(test_text)
+    hlp.write_model(predictions)
+
+if __name__=='__main__':
+    train_glove_BiLSTM(maxlen=200)
+    train_glove_BiLSTM(maxlen=100)
+    train_glove_BiLSTM(maxlen=100, glove_path='../glove.6B.100d.txt', embedding_dim=100)
+    train_token_BiLSTM(maxlen=100)

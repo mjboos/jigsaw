@@ -8,7 +8,7 @@ import joblib
 import pandas as pd, numpy as np
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.multioutput import MultiOutputClassifier
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, KFold
 import helpers as hlp
 import models as models
 import preprocessing as pre
@@ -19,19 +19,31 @@ import time
 #TODO: gather more information from validation
 #TODO: a way to save hyper parameter settings
 
-def validate_model(estimator, X, y, cv=10, **kwargs):
+def validate_model(estimator, X, y, cv=3, fit_args={}, **kwargs):
     '''Validate mean log loss of model'''
-    scores = cross_val_score(estimator, X, y, scoring=hlp.mean_log_loss, cv=cv, **kwargs)
+    kfold = KFold(n_splits=cv)
+    scores = []
+    Xs = np.zeros((len(X),1), dtype='int8')
+    for train, test in kfold.split(Xs):
+        train_x = [X[i] for i in train]
+        test_x = [X[i] for i in test]
+
+#    scores = cross_val_score(estimator, X, y, scoring=hlp.mean_log_loss, cv=cv, **kwargs)
     return scores
 
-models_to_test = {'tfidf_svm' : models.tfidf_NBSVM()}
+def test_hyperparameters(estimator_function, X, y, common_args = {}, search_args={}, fit_args={}, **kwargs):
+    for hyper_arg, grid in search_args.iteritems():
+        print("Processing parameter {} with {} grid points.".format(hyper_arg, len(grid)))
+        for point in grid:
+
+
+    scores = 
+
+models_to_test = {'glove_BiLSTM' : }
 
 train_text, train_labels = pre.load_data()
 train_y = train_labels.values
 
-for model_name, estimator in models_to_test.iteritems():
-    print('Testing model {}'.format(model_name))
-    scores = validate_model(estimator, train_text, train_y)
-    timestr = time.strftime("%m%d-%H%M")
-    with open('../validation/{}_{}.json'.format(model_name, timestr), 'w') as out:
-        json.dump(scores, out)
+timestr = time.strftime("%m%d-%H%M")
+with open('../validation/{}_{}.json'.format(model_name, timestr), 'w') as out:
+    json.dump(scores, out)
