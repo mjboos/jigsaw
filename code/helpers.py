@@ -3,6 +3,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
 from sklearn.base import BaseEstimator
 from itertools import izip
+import joblib
+
+memory = joblib.Memory('/home/mboos/joblib')
 
 #TODO: is this really the metric??
 def mean_log_loss(estimator, X, y):
@@ -20,11 +23,12 @@ def write_model(predictions,
     subm = pd.read_csv('../input/sample_submission.csv')
     submid = pd.DataFrame({'id': subm["id"]})
     submission = pd.concat([submid, pd.DataFrame(predictions, columns=cols)], axis=1)
-    submission.to_csv('submission_{}.csv'.format(timestr), index=False)
+    submission.to_csv('../submissions/submission_{}.csv'.format(timestr), index=False)
 
 def sparse_to_dense(X):
     return X.toarray()
 
+@memory.cache
 def get_glove_embedding(glove_path):
     embeddings_index = {}
     f = open(glove_path)

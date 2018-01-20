@@ -21,25 +21,30 @@ import time
 
 def validate_model(estimator, X, y, cv=3, fit_args={}, **kwargs):
     '''Validate mean log loss of model'''
-    kfold = KFold(n_splits=cv)
+    kfold = KFold(n_splits=cv, **kwargs)
     scores = []
     Xs = np.zeros((len(X),1), dtype='int8')
     for train, test in kfold.split(Xs):
         train_x = [X[i] for i in train]
         test_x = [X[i] for i in test]
-
-#    scores = cross_val_score(estimator, X, y, scoring=hlp.mean_log_loss, cv=cv, **kwargs)
+        estimator.fit(train_x, y[train], **fit_args)
+        predictions = estimator.predict(test_x)
+        scores.append(hlp.mean_log_loss(y[test], predictions))
     return scores
 
 def test_hyperparameters(estimator_function, X, y, common_args = {}, search_args={}, fit_args={}, **kwargs):
+    arg_scores = dict()
     for hyper_arg, grid in search_args.iteritems():
         print("Processing parameter {} with {} grid points.".format(hyper_arg, len(grid)))
+        arg_scores[hyper_arg] = dict()
         for point in grid:
+            param_dict = common_args.copy()
+            param_dict.update({hyper_arg : point})
+            estimator = estimator_function(**param_dict)
+            scores = validate_model(estimator, X, y, fit_args=fit_args, **kwargs)
+            arg_scores[hyper_arg][point] = scores
+    return arg_scores
 
-
-    scores = 
-
-models_to_test = {'glove_BiLSTM' : }
 
 train_text, train_labels = pre.load_data()
 train_y = train_labels.values

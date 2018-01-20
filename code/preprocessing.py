@@ -51,8 +51,8 @@ def clean_comment(comment):
 @memory.cache
 def data_preprocessing(df):
     COMMENT = 'comment_text'
-    df[COMMENT].fillna("CvXtZ", inplace=True)
-    df[COMMENT] = df[COMMENT].apply(clean_comment)
+    df[COMMENT].fillna("CvXtZr", inplace=True)
+#    df[COMMENT] = df[COMMENT].apply(clean_comment)
     return df
 
 def load_data(name='train.csv', preprocess=True):
