@@ -10,18 +10,21 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.model_selection import cross_val_score, KFold
 import helpers as hlp
-import models as models
+import models
 import preprocessing as pre
 import json
 import time
 
 #TODO: implement hyper parameter search
-#TODO: gather more information from validation
-#TODO: a way to save hyper parameter settings
+#TODO: get vocabulary on full corpus
 
-def validate_model(estimator, X, y, cv=3, fit_args={}, **kwargs):
+def CNN_model(**kwargs):
+    pass
+
+#TODO: more information??
+def validator(estimator, X, y, cv=5, fit_args={}, **kwargs):
     '''Validate mean log loss of model'''
-    kfold = KFold(n_splits=cv, **kwargs)
+    kfold = KFold(n_splits=cv, shuffle=True)
     scores = []
     Xs = np.zeros((len(X),1), dtype='int8')
     for train, test in kfold.split(Xs):
@@ -30,7 +33,8 @@ def validate_model(estimator, X, y, cv=3, fit_args={}, **kwargs):
         estimator.fit(train_x, y[train], **fit_args)
         predictions = estimator.predict(test_x)
         scores.append(hlp.mean_log_loss(y[test], predictions))
-    return scores
+    score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : 'ok'}
+    return score_dict
 
 def test_hyperparameters(estimator_function, X, y, common_args = {}, search_args={}, fit_args={}, **kwargs):
     arg_scores = dict()

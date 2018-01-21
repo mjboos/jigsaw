@@ -40,5 +40,3 @@ def get_glove_embedding(glove_path):
     f.close()
     return embeddings_index
 
-
-

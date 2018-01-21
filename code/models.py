@@ -29,6 +29,10 @@ import string
 
 corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans
+
+#TODO: make it possible to initialize with vocabulary
+#TODO: fasttext
+
 def text_to_word_sequence(text,
                           filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n',
                           lower=True, split=" "):
@@ -44,7 +48,6 @@ def text_to_word_sequence(text,
 keras.preprocessing.text.text_to_word_sequence = text_to_word_sequence
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
-#TODO: fasttext
 
 class NBMLR(BaseEstimator):
     def __init__(self, C=4, dual=True, **kwargs):
@@ -79,7 +82,6 @@ def tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
         model_func = GradientBoostingClassifier
     return pipe.Pipeline(memory=memory, steps=[('tfidf', TfidfVectorizer(**pre_args)),
                                                ('model', MultiOutputClassifier(model_func(**estimator_args)))])
-
 
 def tfidf_NBSVM(pre_args={'ngram_range' : (1,2), 'tokenizer' : pre.make_tokenize(),
                             'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
@@ -180,7 +182,7 @@ def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False):
     return embedding_layer
 
 class Embedding_Blanko_DNN(BaseEstimator):
-    def __init__(self, embeddings_index=None, max_features=20000, model_function=None,
+    def __init__(self, embeddings_index=None, max_features=20000, model_function=None, tokenizer=None,
             maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
         self.compilation_args = compilation_args
         self.max_features = max_features
@@ -188,7 +190,11 @@ class Embedding_Blanko_DNN(BaseEstimator):
         self.maxlen = maxlen
         self.embedding_dim = embedding_dim
         self.correct_spelling = correct_spelling
-        self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
+
+        if tokenizer:
+            self.tokenizer = tokenizer
+        else:
+            self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
 
         if embeddings_index:
             self.embeddings_index = embeddings_index
@@ -201,44 +207,8 @@ class Embedding_Blanko_DNN(BaseEstimator):
             self.model_function = LSTM_dropout_model
 
     def fit(self, X, y, **kwargs):
-        self.tokenizer.fit(X)
-        X_t = self.tokenizer.transform(X)
-        word_index = self.tokenizer.tokenizer.word_index
-        embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
-        embedding_layer = make_embedding_layer(embedding_matrix, maxlen=maxlen, trainable=self.trainable)
-        sequence_input = Input(shape=(self.maxlen,), dtype='int32')
-        embedded_sequences = embedding_layer(sequence_input)
-        x = self.model_function(embedded_sequences)
-        self.model = Model(inputs=sequence_input, outputs=x)
-        self.model.compile(**self.compilation_args)
-        self.model.fit(X_t, y, **kwargs)
-        return self
-
-    def predict(self, X):
-        X_t = self.tokenizer.transform(X)
-        return self.model.predict(X_t)
-
-#TODO: refactor so it works for each embedding
-#TODO: better arguments for model architecture
-class GloVe_Blanko(BaseEstimator):
-    def __init__(self, glove_path='../glove.6B.100d.txt', max_features=20000, model_function=None,
-            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
-        self.glove_path = glove_path
-        self.compilation_args = compilation_args
-        self.max_features = max_features
-        self.trainable = trainable
-        self.maxlen = maxlen
-        self.embedding_dim = embedding_dim
-        self.correct_spelling = correct_spelling
-        self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
-        self.embeddings_index = hlp.get_glove_embedding(glove_path)
-        if model_function:
-            self.model_function = model_function
-        else:
-            self.model_function = LSTM_dropout_model
-
-    def fit(self, X, y, **kwargs):
-        self.tokenizer.fit(X)
+        if not self.tokenizer.is_trained:
+            self.tokenizer.fit(X)
         X_t = self.tokenizer.transform(X)
         word_index = self.tokenizer.tokenizer.word_index
         embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)

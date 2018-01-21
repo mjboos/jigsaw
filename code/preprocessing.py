@@ -57,12 +57,12 @@ def clean_comment(comment):
 @memory.cache
 def data_preprocessing(df):
     COMMENT = 'comment_text'
-    df[COMMENT].fillna("CvXtZr", inplace=True)
+    df[COMMENT].fillna(' ', inplace=True)
 #    df[COMMENT] = df[COMMENT].apply(clean_comment)
     return df
 
 def load_data(name='train.csv', preprocess=True):
-    data = pd.read_csv('../input/{}'.format(name))
+    data = pd.read_csv('../input/{}'.format(name), encoding='utf-8')
     if preprocess:
         data = data_preprocessing(data)
     text = data['comment_text']
@@ -90,13 +90,15 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
     return FunctionTransformer(sequence.pad_sequences, accept_sparse=True)
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
-    def __init__(self, max_features=20000, maxlen=200):
+    def __init__(self, max_features=20000, maxlen=200, **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
-        self.tokenizer = text.Tokenizer(num_words=max_features)
+        self.is_trained = False
+        self.tokenizer = text.Tokenizer(num_words=max_features, **kwargs)
 
     def fit(self, list_of_sentences, y=None, **kwargs):
         self.tokenizer.fit_on_texts(list(list_of_sentences))
+        self.is_trained = True
         return self
 
     def transform(self, list_of_sentences):
