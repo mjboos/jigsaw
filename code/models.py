@@ -25,8 +25,10 @@ from keras.preprocessing import text, sequence
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 import keras.preprocessing.text
 import enchant
-corr_dict1 = enchant.request_dict('en_US')
+import string
 
+corr_dict1 = enchant.request_dict('en_US')
+maketrans = string.maketrans
 def text_to_word_sequence(text,
                           filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n',
                           lower=True, split=" "):
@@ -180,7 +182,6 @@ def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False):
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embeddings_index=None, max_features=20000, model_function=None,
             maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
-        self.glove_path = glove_path
         self.compilation_args = compilation_args
         self.max_features = max_features
         self.trainable = trainable
