@@ -44,7 +44,6 @@ test_text, test_labels = pre.load_data('test.csv')
 
 train_y, test_y = train_labels.values, test_labels.values
 
-
 ## token BiLSTM
 def train_token_BiLSTM():
     model = models.keras_token_BiLSTM()
@@ -67,29 +66,18 @@ def train_glove_DNN(glove_path, **kwargs):
     predictions = model.predict(test_text)
     hlp.write_model(predictions)
 
-## Glove BiLSTM
-def train_glove_BiLSTM(**kwargs):
-#    with open('../parameters/glove_bilstm.json','r') as params_file:
-#        model_args = json.load(params_file)
-#    with open('../parameters/glove_bilstm_fit.json', 'r') as fit_file:
-#        fit_args = json.load(fit_file)
-#    model = models.keras_glove_BiLSTM(train_text, **kwargs)
-    model = models.GloVe_BiLSTM(**kwargs)
-    model.fit(train_text, train_y, **fit_args)
-    model.model.load_weights(best_weights_path)
-    predictions = model.predict(test_text)
-    hlp.write_model(predictions)
-
 if __name__=='__main__':
     maxlen = 200
-    max_features = 100000
+    max_features = 500000
+    frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
+    frozen_tokenizer.fit(pd.concat([train_text, test_text]))
 
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
     logger = CSVLogger('../logs/200_twitter_cnn.csv', separator=',', append=False)
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
     train_glove_DNN('../glove.twitter.27B.200d.txt', maxlen=maxlen, max_features=max_features,
-         model_function=models.CNN_model, embedding_dim=200,
+         model_function=models.CNN_model, embedding_dim=200, tokenizer=frozen_tokenizer,
          compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
@@ -97,7 +85,7 @@ if __name__=='__main__':
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
     train_glove_DNN('../glove.twitter.27B.200d.txt', maxlen=maxlen, max_features=max_features,
-         trainable=True,  correct_spelling=models.correct_spelling_pyench,
+         trainable=True,  correct_spelling=models.correct_spelling_pyench, tokenizer=frozen_tokenizer,
          model_function=models.CNN_model, embedding_dim=200,
          compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
@@ -107,7 +95,6 @@ if __name__=='__main__':
     fit_args['callbacks'] = callbacks_list
     train_glove_DNN('../glove.twitter.27B.200d.txt', trainable=True, maxlen=maxlen,
          max_features=max_features, correct_spelling=models.correct_spelling_pyench,
-         model_function=models.LSTM_larger_layers_model, embedding_dim=200,
+         model_function=models.LSTM_larger_layers_model, embedding_dim=200, tokenizer=frozen_tokenizer,
          compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
-
 

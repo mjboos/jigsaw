@@ -45,7 +45,7 @@ def text_to_word_sequence(text,
     seq = text.split(split)
     return [i for i in seq if i]
 
-keras.preprocessing.text.text_to_word_sequence = text_to_word_sequence
+text.text_to_word_sequence = text_to_word_sequence
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
 
@@ -82,14 +82,6 @@ def tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
         model_func = GradientBoostingClassifier
     return pipe.Pipeline(memory=memory, steps=[('tfidf', TfidfVectorizer(**pre_args)),
                                                ('model', MultiOutputClassifier(model_func(**estimator_args)))])
-
-def tfidf_NBSVM(pre_args={'ngram_range' : (1,2), 'tokenizer' : pre.make_tokenize(),
-                            'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
-                            'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1},
-                            estimator_args={'C' : 4, 'dual' : True}):
-    '''Returns unfitted tfidf_NBSVM pipeline object'''
-    return pipe.Pipeline(steps=[('tfidf', TfidfVectorizer(**pre_args)),
-                                               ('NVSM', MultiOutputClassifier(NVBSVM(**estimator_args)))])
 
 def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
     if model_function is None:
