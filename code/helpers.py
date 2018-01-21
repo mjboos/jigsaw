@@ -40,3 +40,14 @@ def get_glove_embedding(glove_path):
     f.close()
     return embeddings_index
 
+@memory.cache
+def get_fasttext_embedding(fasttext_path):
+    embeddings_index = {}
+    with open(fasttext_path, 'r') as f:
+        for line in f:
+            values = line.split()
+            word = values[0]
+            coefs = np.asarray(values[1:], dtype='float32')
+            embeddings_index[word] = coefs
+    return embeddings_index
+

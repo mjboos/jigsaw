@@ -127,12 +127,12 @@ def correct_spelling_pyench(word):
 
 #TODO: more flexible spelling correction
 @memory.cache
-def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, n_jobs=3):
+def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None):
     num_words = min(max_features, len(word_index))
     print('Matrix with {} features.'.format(num_words))
     words_not_found = []
     words_still_not_found = []
-    embedding_matrix = np.zeros((num_words, embedding_dim))
+    embedding_matrix = np.zeros((num_words+1, embedding_dim))
     for word, i in word_index.items():
         if i >= max_features:
             continue
@@ -148,7 +148,6 @@ def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxl
                 embedding_vector = embeddings_index.get(suggested_word)
                 if embedding_vector is not None:
                     embedding_matrix[i] = embedding_vector
-                    emb_counter += 1
                 else:
                     words_still_not_found.append(word)
 
@@ -312,36 +311,16 @@ def CNN_model(x):
     x = Conv1D(50, 5, activation='relu')(x)
     x = GlobalMaxPooling1D()(x)
     x = Dropout(0.5)(x)
-    x = Dense(150, activation='relu')(x)
+    x = Dense(32, activation='relu')(x)
     x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_maxpool_model(x):
-    x = Bidirectional(LSTM(75, return_sequences=True, dropout=0.2))(x)
-    x = MaxPooling1D()(x)
-    x = Dropout(0.2)(x)
-    x = Dense(50, activation="relu")(x)
-    x = Dropout(0.2)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_dropout_larger_LSTM_model(x):
-    x = Bidirectional(LSTM(75, return_sequences=True, dropout=0.2))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.2)(x)
-    x = Dense(50, activation="relu")(x)
-    x = Dropout(0.2)(x)
     x = Dense(6, activation="sigmoid")(x)
     return x
 
 def LSTM_dropout_model(x):
-    x = Bidirectional(LSTM(150, return_sequences=True, dropout=0.5))(x)
+    x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
     x = GlobalMaxPool1D()(x)
     x = Dropout(0.5)(x)
-    x = Dense(200, activation="relu")(x)
+    x = Dense(32, activation="relu")(x)
     x = Dropout(0.5)(x)
     x = Dense(6, activation="sigmoid")(x)
     return x
-
-
