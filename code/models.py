@@ -125,13 +125,15 @@ def correct_spelling_pyench(word):
     else:
         return None
 
+
+
 #TODO: more flexible spelling correction
 @memory.cache
 def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None):
     num_words = min(max_features, len(word_index))
     print('Matrix with {} features.'.format(num_words))
     words_not_found = []
-    words_still_not_found = []
+    not_replaced = 0
     embedding_matrix = np.zeros((num_words+1, embedding_dim))
     for word, i in word_index.items():
         if i >= max_features:
@@ -149,16 +151,12 @@ def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxl
                 if embedding_vector is not None:
                     embedding_matrix[i] = embedding_vector
                 else:
-                    words_still_not_found.append(word)
+                    not_replaced += 1
 
     print('WORDs not found: {}'.format(len(words_not_found)))
     print('################################')
-    print(words_not_found)
-    print('###############################')
-    print('WORDs not replaced: {}'.format(len(words_still_not_found)))
-    print('################################')
-    print(words_still_not_found)
-    print('###############################')
+    with open('../notfound.txt', 'w+') as fl:
+        json.dump(words_not_found, fl)
     return embedding_matrix
 
 def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False):

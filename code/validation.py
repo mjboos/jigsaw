@@ -15,13 +15,15 @@ import preprocessing as pre
 import json
 import time
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateScheduler, CSVLogger
 
 #TODO: implement hyper parameter search
 #TODO: get vocabulary on full corpus
 
-def CNN_model(X, y, **kwargs):
+def DNN_model(X, y, fit_args={}, **kwargs):
     '''Builds and evaluates a CNN on train_text, train_labels'''
-    pass
+    model = models.Embedding_Blanko_DNN(**kwargs)
+    return validator(model, X, y, fit_args=fit_args)
 
 def do_hyper_search(space, model_function):
     '''Do a search over the space using a frozen model function'''
@@ -56,3 +58,7 @@ frozen_tokenizer.fit(pd.concat([train_text, test_text]))
 
 frozen_model_func = partial(CNN_model, train_text, train_y,
         tokenizer=frozen_tokenizer, **fixed_params_dict)
+
+fit_args = {'batch_size' : 256, 'epochs' : 20,
+                  'validation_split' : 0.1, 'callbacks' : callbacks_list}
+early = EarlyStopping(monitor="val_loss", mode="min", patience=3)
