@@ -129,10 +129,9 @@ def correct_spelling_pyench(word):
 @memory.cache
 def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, n_jobs=3):
     num_words = min(max_features, len(word_index))
+    print('Matrix with {} features.'.format(num_words))
     words_not_found = []
     words_still_not_found = []
-#    embedding_matrix = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(process_word)(word, i, max_features, embedding_dim, correct_spelling, corr_dict1, embeddings_index) for word, i in word_index.items())
-#    embedding_matrix = np.vstack(embedding_matrix)
     embedding_matrix = np.zeros((num_words, embedding_dim))
     for word, i in word_index.items():
         if i >= max_features:

@@ -3,7 +3,7 @@
 from __future__ import division
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+from functools import partial
 import joblib
 import pandas as pd, numpy as np
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
@@ -14,11 +14,17 @@ import models
 import preprocessing as pre
 import json
 import time
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 
 #TODO: implement hyper parameter search
 #TODO: get vocabulary on full corpus
 
-def CNN_model(**kwargs):
+def CNN_model(X, y, **kwargs):
+    '''Builds and evaluates a CNN on train_text, train_labels'''
+    pass
+
+def do_hyper_search(space, model_function):
+    '''Do a search over the space using a frozen model function'''
     pass
 
 #TODO: more information??
@@ -28,31 +34,25 @@ def validator(estimator, X, y, cv=5, fit_args={}, **kwargs):
     scores = []
     Xs = np.zeros((len(X),1), dtype='int8')
     for train, test in kfold.split(Xs):
-        train_x = [X[i] for i in train]
-        test_x = [X[i] for i in test]
-        estimator.fit(train_x, y[train], **fit_args)
-        predictions = estimator.predict(test_x)
+#        train_x = X[train] #[X[i] for i in train]
+#        test_x = X[test]# for i in test]
+        estimator.fit(X[train], y[train], **fit_args)
+        predictions = estimator.predict(X[test])
         scores.append(hlp.mean_log_loss(y[test], predictions))
-    score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : 'ok'}
+    score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
     return score_dict
 
-def test_hyperparameters(estimator_function, X, y, common_args = {}, search_args={}, fit_args={}, **kwargs):
-    arg_scores = dict()
-    for hyper_arg, grid in search_args.iteritems():
-        print("Processing parameter {} with {} grid points.".format(hyper_arg, len(grid)))
-        arg_scores[hyper_arg] = dict()
-        for point in grid:
-            param_dict = common_args.copy()
-            param_dict.update({hyper_arg : point})
-            estimator = estimator_function(**param_dict)
-            scores = validate_model(estimator, X, y, fit_args=fit_args, **kwargs)
-            arg_scores[hyper_arg][point] = scores
-    return arg_scores
+fixed_params_file = '../parameters/fixed.json'
 
+with open(fixed_params_file, 'r') as fl:
+    fixed_params_dict = json.load(fl)
 
 train_text, train_labels = pre.load_data()
+test_text, _ = pre.load_data('test.csv')
 train_y = train_labels.values
+frozen_tokenizer = pre.KerasPaddingTokenizer(maxlen=fixed_params_dict['maxlen'],
+        max_features=fixed_params_dict['max_features'])
+frozen_tokenizer.fit(pd.concat([train_text, test_text]))
 
-timestr = time.strftime("%m%d-%H%M")
-with open('../validation/{}_{}.json'.format(model_name, timestr), 'w') as out:
-    json.dump(scores, out)
+frozen_model_func = partial(CNN_model, train_text, train_y,
+        tokenizer=frozen_tokenizer, **fixed_params_dict)
