@@ -201,7 +201,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
         X_t = self.tokenizer.transform(X)
         word_index = self.tokenizer.tokenizer.word_index
         embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
-        embedding_layer = make_embedding_layer(embedding_matrix, maxlen=maxlen, trainable=self.trainable)
+        embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable)
         sequence_input = Input(shape=(self.maxlen,), dtype='int32')
         embedded_sequences = embedding_layer(sequence_input)
         x = self.model_function(embedded_sequences)

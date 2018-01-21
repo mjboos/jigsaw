@@ -36,7 +36,7 @@ lr = LearningRateScheduler(schedule)
 
 
 callbacks_list = [checkpoint, early] #early
-fit_args = {'batch_size' : 256, 'epochs' : 20,
+fit_args = {'batch_size' : 128, 'epochs' : 20,
                   'validation_split' : 0.2, 'callbacks' : callbacks_list}
 
 train_text, train_labels = pre.load_data()
