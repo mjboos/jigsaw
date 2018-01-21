@@ -81,22 +81,33 @@ def train_glove_BiLSTM(**kwargs):
     hlp.write_model(predictions)
 
 if __name__=='__main__':
-     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-     logger = CSVLogger('../logs/200_twitter_cnn.csv', separator=',', append=False)
-     callbacks_list = [logger, checkpoint, early] #early
-     fit_args['callbacks'] = callbacks_list
-     train_glove_DNN('../glove.twitter.27B.200d.txt', maxlen=200, max_features=100000,correct_spelling=True, model_function=models.CNN_model, embedding_dim=200, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
+    maxlen = 200
+    max_features = 100000
 
-     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-     logger = CSVLogger('../logs/200_twitter_trainable_cnn.csv', separator=',', append=False)
-     callbacks_list = [logger, checkpoint, early] #early
-     fit_args['callbacks'] = callbacks_list
-     train_glove_DNN('../glove.twitter.27B.200d.txt', maxlen=200, max_features=100000,  trainable=True,  correct_spelling=True, model_function=models.CNN_model, embedding_dim=200, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
+    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+    logger = CSVLogger('../logs/200_twitter_cnn.csv', separator=',', append=False)
+    callbacks_list = [logger, checkpoint, early] #early
+    fit_args['callbacks'] = callbacks_list
+    train_glove_DNN('../glove.twitter.27B.200d.txt', maxlen=maxlen, max_features=max_features,
+         model_function=models.CNN_model, embedding_dim=200,
+         compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
-     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-     logger = CSVLogger('../logs/200_twitter_larger_trainable_spelling_LSTM.csv', separator=',', append=False)
-     callbacks_list = [logger, checkpoint, early] #early
-     fit_args['callbacks'] = callbacks_list
-     train_glove_DNN('../glove.twitter.27B.200d.txt', trainable=True, maxlen=200, max_features=100000, correct_spelling=True, model_function=models.LSTM_larger_layers_model, embedding_dim=200, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
+    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+    logger = CSVLogger('../logs/200_twitter_spell_trainable_cnn.csv', separator=',', append=False)
+    callbacks_list = [logger, checkpoint, early] #early
+    fit_args['callbacks'] = callbacks_list
+    train_glove_DNN('../glove.twitter.27B.200d.txt', maxlen=maxlen, max_features=max_features,
+         trainable=True,  correct_spelling=models.correct_spelling_pyench,
+         model_function=models.CNN_model, embedding_dim=200,
+         compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
+
+    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+    logger = CSVLogger('../logs/200_twitter_larger_trainable_spelling_LSTM.csv', separator=',', append=False)
+    callbacks_list = [logger, checkpoint, early] #early
+    fit_args['callbacks'] = callbacks_list
+    train_glove_DNN('../glove.twitter.27B.200d.txt', trainable=True, maxlen=maxlen,
+         max_features=max_features, correct_spelling=models.correct_spelling_pyench,
+         model_function=models.LSTM_larger_layers_model, embedding_dim=200,
+         compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
 
