@@ -21,11 +21,17 @@ tokenizer=TweetTokenizer()
 eng_stopwords = set(stopwords.words("english"))
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
-#TODO: column-wise logloss as validation
-#TODO: feature engineering for labels
-#TODO: dlib's hyper parameter search
-#TODO: GP modelling of test set
-#TODO: GloVe
+def text_to_word_sequence(text,
+                          filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n',
+                          lower=True, split=" "):
+    if lower: text = text.lower()
+    if type(text) == unicode:
+        translate_table = {ord(c): ord(t) for c,t in zip(filters, split*len(filters)) }
+    else:
+        translate_table = maketrans(filters, split * len(filters))
+    text = text.translate(translate_table)
+    seq = text.split(split)
+    return [i for i in seq if i]
 
 #TODO: what more can be done for cleaning?
 def clean_comment(comment):

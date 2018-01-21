@@ -9,6 +9,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.base import BaseEstimator
+from sklearn.ensemble import GradientBoostingClassifier
 import helpers as hlp
 import preprocessing as pre
 import sklearn.pipeline as pipe
@@ -22,9 +23,26 @@ from keras.layers import Dense, Embedding, Input
 from keras.layers import LSTM, Bidirectional, GlobalMaxPool1D, Dropout, BatchNormalization, MaxPooling1D
 from keras.preprocessing import text, sequence
 from keras.callbacks import EarlyStopping, ModelCheckpoint
+import keras.preprocessing.text
+import enchant
+corr_dict1 = enchant.request_dict('en_US')
 
+def text_to_word_sequence(text,
+                          filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n',
+                          lower=True, split=" "):
+    if lower: text = text.lower()
+    if type(text) == unicode:
+        translate_table = {ord(c): ord(t) for c,t in zip(filters, split*len(filters)) }
+    else:
+        translate_table = maketrans(filters, split * len(filters))
+    text = text.translate(translate_table)
+    seq = text.split(split)
+    return [i for i in seq if i]
 
+keras.preprocessing.text.text_to_word_sequence = text_to_word_sequence
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
+
+#TODO: fasttext
 
 class NBMLR(BaseEstimator):
     def __init__(self, C=4, dual=True, **kwargs):
@@ -50,16 +68,28 @@ class NBMLR(BaseEstimator):
     def predict_proba(self, X):
         return self.lr.predict_proba(X.multiply(self.r))
 
+def tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
+                            'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
+                            'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1},
+                            estimator_args={'n_estimators' : 150}, model_func=None):
+    '''Returns unfitted tfidf_NBSVM pipeline object'''
+    if model_func is None:
+        model_func = GradientBoostingClassifier
+    return pipe.Pipeline(memory=memory, steps=[('tfidf', TfidfVectorizer(**pre_args)),
+                                               ('model', MultiOutputClassifier(model_func(**estimator_args)))])
+
+
 def tfidf_NBSVM(pre_args={'ngram_range' : (1,2), 'tokenizer' : pre.make_tokenize(),
                             'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
                             'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1},
                             estimator_args={'C' : 4, 'dual' : True}):
     '''Returns unfitted tfidf_NBSVM pipeline object'''
-    return pipe.Pipeline(memory=memory, steps=[('tfidf', TfidfVectorizer(**pre_args)),
+    return pipe.Pipeline(steps=[('tfidf', TfidfVectorizer(**pre_args)),
                                                ('NVSM', MultiOutputClassifier(NVBSVM(**estimator_args)))])
 
-def keras_token_BiLSTM(max_features=20000, maxlen=100, embed_size=128):
-    embed_size = embed_size
+def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
+    if model_function is None:
+        model_function = LSTM_dropout_model
     inp = Input(shape=(maxlen, ))
     x = Embedding(max_features, embed_size)(inp)
     x = Bidirectional(LSTM(50, return_sequences=True))(x)
@@ -92,13 +122,19 @@ def process_word(word, i, max_features, embedding_dim, correct_spelling, corr_di
                 return embedding_vector[None]
     return np.zeros((1, embedding_dim))
 
+def correct_spelling_pyench(word):
+    suggestions = corr_dict1.suggest(word)
+    if len(suggestions) > 0:
+        return suggestions[0]
+    else:
+        return None
+
+#TODO: more flexible spelling correction
 @memory.cache
-def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=False, n_jobs=3):
-    import enchant
-    corr_dict1 = enchant.request_dict('en_US')
+def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, n_jobs=3):
     num_words = min(max_features, len(word_index))
-    emb_counter = 0
-    non_cnt = 0
+    words_not_found = []
+    words_still_not_found = []
 #    embedding_matrix = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(process_word)(word, i, max_features, embedding_dim, correct_spelling, corr_dict1, embeddings_index) for word, i in word_index.items())
 #    embedding_matrix = np.vstack(embedding_matrix)
     embedding_matrix = np.zeros((num_words, embedding_dim))
@@ -109,53 +145,106 @@ def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxl
         if embedding_vector is not None:
             # words not found in embedding index will be all-zeros.
             embedding_matrix[i] = embedding_vector
-        elif correct_spelling:
-            # replace with autocorrected word IF this word is in embeddings
-            suggestions = corr_dict1.suggest(word)
-            if len(suggestions) > 0:
-                suggested_word = suggestions[0]
+        else:
+            words_not_found.append(word)
+            if correct_spelling:
+                # replace with autocorrected word IF this word is in embeddings
+                suggested_word = correct_spelling(word)
                 embedding_vector = embeddings_index.get(suggested_word)
                 if embedding_vector is not None:
                     embedding_matrix[i] = embedding_vector
                     emb_counter += 1
                 else:
-                    non_cnt += 1
-    print('WORD WERE REPLACED: {}'.format(emb_counter))
-    print('WORD WERE not REPLACED: {}'.format(non_cnt))
+                    words_still_not_found.append(word)
+
+    print('WORDs not found: {}'.format(len(words_not_found)))
+    print('################################')
+    print(words_not_found)
+    print('###############################')
+    print('WORDs not replaced: {}'.format(len(words_still_not_found)))
+    print('################################')
+    print(words_still_not_found)
+    print('###############################')
+    return embedding_matrix
+
+def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False):
     # load pre-trained word embeddings into an Embedding layer
     # note that we set trainable = False so as to keep the embeddings fixed
-    embedding_layer = Embedding(num_words,
-                                embedding_dim,
+    embedding_layer = Embedding(embedding_matrix.shape[0],
+                                embedding_matrix.shape[1],
                                 weights=[embedding_matrix],
                                 input_length=maxlen,
                                 trainable=False)
     return embedding_layer
 
-#TODO: better arguments for model architecture
-class GloVe_BiLSTM(BaseEstimator):
-    def __init__(self, glove_path='../glove.6B.50d.txt', max_features=20000,
-            maxlen=200, embedding_dim=50, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
+class Embedding_Blanko_DNN(BaseEstimator):
+    def __init__(self, embeddings_index=None, max_features=20000, model_function=None,
+            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
         self.glove_path = glove_path
         self.compilation_args = compilation_args
         self.max_features = max_features
+        self.trainable = trainable
         self.maxlen = maxlen
         self.embedding_dim = embedding_dim
+        self.correct_spelling = correct_spelling
         self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
-        self.embeddings_index = hlp.get_glove_embedding(glove_path)
+
+        if embeddings_index:
+            self.embeddings_index = embeddings_index
+        else:
+            self.embeddings_index = hlp.get_glove_embedding('../glove.6B.100d.txt')
+
+        if model_function:
+            self.model_function = model_function
+        else:
+            self.model_function = LSTM_dropout_model
 
     def fit(self, X, y, **kwargs):
         self.tokenizer.fit(X)
         X_t = self.tokenizer.transform(X)
         word_index = self.tokenizer.tokenizer.word_index
-        embedding_layer = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim)
+        embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+        embedding_layer = make_embedding_layer(embedding_matrix, maxlen=maxlen, trainable=self.trainable)
         sequence_input = Input(shape=(self.maxlen,), dtype='int32')
         embedded_sequences = embedding_layer(sequence_input)
-        x = Bidirectional(LSTM(50, return_sequences=True, dropout=0.2))(embedded_sequences)
-        x = GlobalMaxPool1D()(x)
-        x = Dropout(0.2)(x)
-        x = Dense(50, activation="relu")(x)
-        x = Dropout(0.2)(x)
-        x = Dense(6, activation="sigmoid")(x)
+        x = self.model_function(embedded_sequences)
+        self.model = Model(inputs=sequence_input, outputs=x)
+        self.model.compile(**self.compilation_args)
+        self.model.fit(X_t, y, **kwargs)
+        return self
+
+    def predict(self, X):
+        X_t = self.tokenizer.transform(X)
+        return self.model.predict(X_t)
+
+#TODO: refactor so it works for each embedding
+#TODO: better arguments for model architecture
+class GloVe_Blanko(BaseEstimator):
+    def __init__(self, glove_path='../glove.6B.100d.txt', max_features=20000, model_function=None,
+            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
+        self.glove_path = glove_path
+        self.compilation_args = compilation_args
+        self.max_features = max_features
+        self.trainable = trainable
+        self.maxlen = maxlen
+        self.embedding_dim = embedding_dim
+        self.correct_spelling = correct_spelling
+        self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
+        self.embeddings_index = hlp.get_glove_embedding(glove_path)
+        if model_function:
+            self.model_function = model_function
+        else:
+            self.model_function = LSTM_dropout_model
+
+    def fit(self, X, y, **kwargs):
+        self.tokenizer.fit(X)
+        X_t = self.tokenizer.transform(X)
+        word_index = self.tokenizer.tokenizer.word_index
+        embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+        embedding_layer = make_embedding_layer(embedding_matrix, maxlen=maxlen, trainable=self.trainable)
+        sequence_input = Input(shape=(self.maxlen,), dtype='int32')
+        embedded_sequences = embedding_layer(sequence_input)
+        x = self.model_function(embedded_sequences)
         self.model = Model(inputs=sequence_input, outputs=x)
         self.model.compile(**self.compilation_args)
         self.model.fit(X_t, y, **kwargs)
@@ -194,8 +283,6 @@ def LSTM_avg_model(x):
     x = Dropout(0.5)(x)
     x = Dense(6, activation="sigmoid")(x)
     return x
-
-
 
 def LSTM_larger_layers_model(x):
     x = Bidirectional(LSTM(150, return_sequences=True, dropout=0.5))(x)
@@ -287,70 +374,12 @@ def LSTM_dropout_larger_LSTM_model(x):
     return x
 
 def LSTM_dropout_model(x):
-    x = Bidirectional(LSTM(100, return_sequences=True, dropout=0.3))(x)
+    x = Bidirectional(LSTM(150, return_sequences=True, dropout=0.5))(x)
     x = GlobalMaxPool1D()(x)
-    x = Dropout(0.3)(x)
-    x = Dense(75, activation="relu")(x)
-    x = Dropout(0.3)(x)
+    x = Dropout(0.5)(x)
+    x = Dense(200, activation="relu")(x)
+    x = Dropout(0.5)(x)
     x = Dense(6, activation="sigmoid")(x)
     return x
 
-
-#TODO: better arguments for model architecture
-class GloVe_Blanko(BaseEstimator):
-    def __init__(self, glove_path='../glove.6B.100d.txt', max_features=20000, model_function=None,
-            maxlen=200, embedding_dim=100, correct_spelling=False, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
-        self.glove_path = glove_path
-        self.compilation_args = compilation_args
-        self.max_features = max_features
-        self.maxlen = maxlen
-        self.embedding_dim = embedding_dim
-        self.correct_spelling = correct_spelling
-        self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
-        self.embeddings_index = hlp.get_glove_embedding(glove_path)
-        if model_function:
-            self.model_function = model_function
-        else:
-            self.model_function = LSTM_dropout_model
-
-    def fit(self, X, y, **kwargs):
-        self.tokenizer.fit(X)
-        X_t = self.tokenizer.transform(X)
-        word_index = self.tokenizer.tokenizer.word_index
-        embedding_layer = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
-        sequence_input = Input(shape=(self.maxlen,), dtype='int32')
-        embedded_sequences = embedding_layer(sequence_input)
-        x = self.model_function(embedded_sequences)
-        self.model = Model(inputs=sequence_input, outputs=x)
-        self.model.compile(**self.compilation_args)
-        self.model.fit(X_t, y, **kwargs)
-        return self
-
-    def predict(self, X):
-        X_t = self.tokenizer.transform(X)
-        return self.model.predict(X_t)
-
-
-def keras_glove_BiLSTM(X, glove_path='../glove.6B.50d.txt', max_features=20000, maxlen=200, embedding_dim=50):
-    embeddings_index = hlp.get_glove_embedding(glove_path)
-    tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
-    tokenizer.fit(X)
-    word_index = tokenizer.tokenizer.word_index
-    embedding_layer = make_embedding_matrix(embeddings_index, word_index, max_features=max_features, maxlen=maxlen, embedding_dim=embedding_dim)
-    sequence_input = Input(shape=(maxlen,), dtype='int32')
-    embedded_sequences = embedding_layer(sequence_input)
-    x = Bidirectional(LSTM(50, return_sequences=True))(embedded_sequences)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.1)(x)
-    x = Dense(50, activation="relu")(x)
-    x = Dropout(0.1)(x)
-    x = Dense(30, activation="relu")(x)
-    x = Dropout(0.1)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    model = Model(inputs=sequence_input, outputs=x)
-    model.compile(loss='binary_crossentropy',
-                  optimizer='adam',
-                  metrics=['accuracy'])
-    return pipe.Pipeline(steps=[('tokenizer', pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)),
-                                 ('BiLSTM', model)])
 

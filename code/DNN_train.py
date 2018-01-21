@@ -54,18 +54,18 @@ def train_token_BiLSTM():
     hlp.write_model(predictions)
 
 ## Glove BiLSTM
-def train_glove_DNN(**kwargs):
+def train_glove_DNN(glove_path, **kwargs):
 #    with open('../parameters/glove_bilstm.json','r') as params_file:
 #        model_args = json.load(params_file)
 #    with open('../parameters/glove_bilstm_fit.json', 'r') as fit_file:
 #        fit_args = json.load(fit_file)
 #    model = models.keras_glove_BiLSTM(train_text, **kwargs)
-    model = models.GloVe_Blanko(**kwargs)
+    embeddings_index = hlp.get_glove_embedding(glove_path)
+    model = models.Embedding_Blanko_DNN(embeddings_index=embeddings_index, **kwargs)
     model.fit(train_text, train_y, **fit_args)
     model.model.load_weights(best_weights_path)
     predictions = model.predict(test_text)
     hlp.write_model(predictions)
-
 
 ## Glove BiLSTM
 def train_glove_BiLSTM(**kwargs):
@@ -93,7 +93,6 @@ if __name__=='__main__':
      fit_args['callbacks'] = callbacks_list
      train_glove_DNN(maxlen=200, max_features=100000,  glove_path='../glove.twitter.27B.200d.txt', correct_spelling=True, model_function=models.LSTM_larger_layers_model, embedding_dim=200, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
-
      checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
      logger = CSVLogger('../logs/300_md_larger_LSTM.csv', separator=',', append=False)
      callbacks_list = [logger, checkpoint, early] #early
@@ -101,29 +100,8 @@ if __name__=='__main__':
      train_glove_DNN(maxlen=200, max_features=100000,  glove_path='../glove.6B.300d.txt', model_function=models.LSTM_larger_layers_model, embedding_dim=300, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
      checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-     logger = CSVLogger('../logs/300_spelling_larger_LSTM.csv', separator=',', append=False)
-     callbacks_list = [logger, checkpoint, early] #early
-     fit_args['callbacks'] = callbacks_list
-     train_glove_DNN(maxlen=200, max_features=100000,  glove_path='../glove.6B.300d.txt', model_function=models.LSTM_larger_layers_model, embedding_dim=300, correct_spelling=True, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
-
-     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
      logger = CSVLogger('../logs/200_twitter_cnn.csv', separator=',', append=False)
      callbacks_list = [logger, checkpoint, early] #early
      fit_args['callbacks'] = callbacks_list
      train_glove_DNN(maxlen=200, max_features=100000,  glove_path='../glove.twitter.27B.200d.txt', correct_spelling=True, model_function=models.CNN_model, embedding_dim=200, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
-
-
-#     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-#     logger = CSVLogger('../logs/300_md_twice_LSTM.csv', separator=',', append=False)
-#     callbacks_list = [logger, checkpoint, early] #early
-#     fit_args['callbacks'] = callbacks_list
-#     train_glove_DNN(maxlen=200, max_features=50000,  glove_path='../glove.6B.300d.txt', model_function=models.LSTM_twice_model, embedding_dim=300, compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
-#
-#
-#    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-#    logger = CSVLogger('../logs/300_layers_LSTM.csv', separator=',', append=False)
-#    callbacks_list = [logger, checkpoint, early] #early
-#    fit_args['callbacks'] = callbacks_list
-#    train_glove_DNN(maxlen=200, glove_path='../glove.6B.300d.txt', model_function=models.LSTM_dropout_more_layers_model, embedding_dim=300, compilation_args={'optimizer' : 'nadam', 'loss':'binary_crossentropy','metrics':['accuracy']})
-#
