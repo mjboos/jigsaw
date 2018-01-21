@@ -26,6 +26,7 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint
 import keras.preprocessing.text
 import enchant
 import string
+import json
 
 corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans

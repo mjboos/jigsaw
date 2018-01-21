@@ -79,32 +79,32 @@ if __name__=='__main__':
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
 
-    embedding_dim = 200
-    embedding = hlp.get_glove_embedding('../glove.twitter.27B.200d.txt'
+    embedding_dim = 300
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
 
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    logger = CSVLogger('../logs/200_twitter_cnn.csv', separator=',', append=False)
+    logger = CSVLogger('../logs/300_fasttext_cnn.csv', separator=',', append=False)
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
     train_DNN(embedding, maxlen=maxlen, max_features=max_features,
-         model_function=models.CNN_model, embedding_dim=200, tokenizer=frozen_tokenizer,
+         model_function=models.CNN_model, embedding_dim=embedding_dim, tokenizer=frozen_tokenizer,
          compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    logger = CSVLogger('../logs/200_twitter_spell_trainable_cnn.csv', separator=',', append=False)
+    logger = CSVLogger('../logs/300_fasttext_trainable_CNN.csv', separator=',', append=False)
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
-    train_DNN(embedding, maxlen=maxlen, max_features=max_features,
-         trainable=True,  correct_spelling=models.correct_spelling_pyench, tokenizer=frozen_tokenizer,
-         model_function=models.CNN_model, embedding_dim=200,
+    train_DNN(embedding, trainable=True, maxlen=maxlen,
+         max_features=max_features, model_function=models.CNN_model,
+         embedding_dim=embedding_dim, tokenizer=frozen_tokenizer,
          compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    logger = CSVLogger('../logs/200_twitter_larger_trainable_LSTM.csv', separator=',', append=False)
+    logger = CSVLogger('../logs/300_fasttext_LSTM.csv', separator=',', append=False)
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
     train_DNN(embedding, trainable=False, maxlen=maxlen,
          max_features=max_features, model_function=models.LSTM_dropout_model,
-         embedding_dim=200, tokenizer=frozen_tokenizer,
+         embedding_dim=embedding_dim, tokenizer=frozen_tokenizer,
          compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
