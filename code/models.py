@@ -126,15 +126,46 @@ def correct_spelling_pyench(word):
     else:
         return None
 
+def prune_matrix_and_tokenizer(embedding_matrix, tokenizer):
+    '''Prunes the embedding matrix and tokenizer by replacing all words corresponding to zero vectors (in embedding matrix) with an id for unknown word.
+    This id is the number of known words + 1.'''
+    import operator
+    import copy
+    tokenizer = copy.deepcopy(tokenizer)
+    word_list = which_words_are_zero_vectors(embedding_matrix, tokenizer.word_index, tokenizer.oov_token)
+    for word in word_list:
+        tokenizer.word_index.pop(word, None)
+        tokenizer.word_docs.pop(word, None)
+        tokenizer.word_counts.pop(word, None)
 
+    # now reorder ranks
+    ranked_words, _ = zip(*sorted(tokenizer.word_index.items(), key=operator.itemgetter(1)))
+    tokenizer.word_index = {word : rank+1 for rank, word in enumerate(ranked_words)}
+    return prune_zero_vectors(embedding_matrix), tokenizer
+
+def prune_zero_vectors(matrix):
+    '''prune all zero vectors of matrix except the first and last one (non existent and out of vocabulary vectors)'''
+    matrix = matrix[np.array([True] + [vec.any() for vec in matrix[1:-1]] + [True])]
+    return matrix
+
+def which_words_are_zero_vectors(embedding_matrix, word_index, oov_token):
+    '''Returns a list of words which are zero vectors (not found) in the embedding matrix'''
+    word_list = []
+    for word, i in word_index.items():
+        if word == oov_token:
+            continue
+        if i >= embedding_matrix.shape[0]:
+            # word is out of max features
+            word_list.append(word)
+        elif not embedding_matrix[i].any():
+            # word is a zero vector
+            word_list.append(word)
+    return word_list
 
 #TODO: more flexible spelling correction
-@memory.cache
-def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None):
+def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, diagnostics=False):
     num_words = min(max_features, len(word_index))
-    print('Matrix with {} features.'.format(num_words))
-    words_not_found = []
-    not_replaced = 0
+    # add one element for zero vector
     embedding_matrix = np.zeros((num_words+1, embedding_dim))
     for word, i in word_index.items():
         if i >= max_features:
@@ -144,20 +175,21 @@ def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxl
             # words not found in embedding index will be all-zeros.
             embedding_matrix[i] = embedding_vector
         else:
-            words_not_found.append(word)
             if correct_spelling:
                 # replace with autocorrected word IF this word is in embeddings
                 suggested_word = correct_spelling(word)
                 embedding_vector = embeddings_index.get(suggested_word)
                 if embedding_vector is not None:
                     embedding_matrix[i] = embedding_vector
-                else:
-                    not_replaced += 1
 
-    print('WORDs not found: {}'.format(len(words_not_found)))
-    print('################################')
-    with open('../notfound.txt', 'w+') as fl:
-        json.dump(words_not_found, fl)
+    # check which words are not recognized
+    if diagnostics:
+        word_list = which_words_are_zero_vectors(embedding_matrix, word_index)
+        print('WORDs not found: {}'.format(len(word_list)))
+        print('################################')
+        with open('../notfound.txt', 'w+') as fl:
+            json.dump(word_list, fl)
+
     return embedding_matrix
 
 def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False):
@@ -170,9 +202,14 @@ def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False):
                                 trainable=False)
     return embedding_layer
 
+def add_oov_vector_and_prune(embedding_matrix, tokenizer):
+    embedding_matrix = np.vstack([embedding_matrix, np.zeros((1, embedding_matrix.shape[1]))])
+    return prune_matrix_and_tokenizer(embedding_matrix, tokenizer)
+
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embeddings_index=None, max_features=20000, model_function=None, tokenizer=None,
-            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
+            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False,
+            compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
         self.compilation_args = compilation_args
         self.max_features = max_features
         self.trainable = trainable
@@ -201,6 +238,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
         X_t = self.tokenizer.transform(X)
         word_index = self.tokenizer.tokenizer.word_index
         embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+        embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
         embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable)
         sequence_input = Input(shape=(self.maxlen,), dtype='int32')
         embedded_sequences = embedding_layer(sequence_input)

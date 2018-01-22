@@ -58,11 +58,12 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
     return FunctionTransformer(sequence.pad_sequences, accept_sparse=True)
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
-    def __init__(self, max_features=20000, maxlen=200, **kwargs):
+    def __init__(self, max_features=20000, maxlen=200,
+            filters='!\'"#$%&()*+,-./:;<=>?@[\\]^_`{|}~1234567890\t\n', **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
         self.is_trained = False
-        self.tokenizer = text.Tokenizer(num_words=max_features, **kwargs)
+        self.tokenizer = text.Tokenizer(num_words=max_features, filters=filters, oov_token='pxtxzaad', **kwargs)
 
     def fit(self, list_of_sentences, y=None, **kwargs):
         self.tokenizer.fit_on_texts(list(list_of_sentences))
