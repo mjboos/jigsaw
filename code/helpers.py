@@ -15,15 +15,24 @@ def mean_log_loss(estimator, X, y):
                    in izip(y.T, probas)]
     return np.mean(column_loss)
 
-def write_model(predictions,
+def correct_predictions(predictions, factor=0.5):
+    corrected = logit(predicions)-0.5
+    return np.exp(corrected)/(np.exp(corrected)+1)
+
+def write_model(predictions, correct=correct_predictions,
                 cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']):
     import pandas as pd
     import time
+    if correct:
+        predictions = correct(predictions)
     timestr = time.strftime("%m%d-%H%M")
     subm = pd.read_csv('../input/sample_submission.csv')
     submid = pd.DataFrame({'id': subm["id"]})
     submission = pd.concat([submid, pd.DataFrame(predictions, columns=cols)], axis=1)
     submission.to_csv('../submissions/submission_{}.csv'.format(timestr), index=False)
+
+def logit(x):
+    return np.log(x/(1-x))
 
 def sparse_to_dense(X):
     return X.toarray()
@@ -50,4 +59,15 @@ def get_fasttext_embedding(fasttext_path):
             coefs = np.asarray(values[1:], dtype='float32')
             embeddings_index[word] = coefs
     return embeddings_index
+
+def predictions_for_language(language_dict, test_data=None):
+    '''Expects a language_dict, where the keys correspond to languages and the values to models that implement fit'''
+    if test_data is None:
+        test_data = pre.load_data(name='test.csv')
+    languages_test = pd.read_csv('language_test.csv')
+    predictions = np.zeros((languages_test.shape[0], 6))
+    # iterate through languages
+    for language, (language_data, _) in test_data.items():
+        predictions[languages_test==language] = language_dict[language].predict(language_data)
+    return predictions
 

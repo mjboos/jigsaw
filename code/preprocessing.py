@@ -44,13 +44,20 @@ def data_preprocessing(df):
     df[COMMENT] = df[COMMENT].apply(clean_comment)
     return df
 
-def load_data(name='train.csv', preprocess=True):
+def load_data(name='train.csv', preprocess=True, language=True):
     data = pd.read_csv('../input/{}'.format(name), encoding='utf-8')
     if preprocess:
         data = data_preprocessing(data)
-    text = data['comment_text']
-    labels = data.iloc[:, 2:]
-    return text, labels
+    if language:
+        languages = pd.read_csv('language_{}'.format(name))
+        grouped_data = data.groupby(by=lambda x : languages[x])
+        data_dict = { language : [data_language['comment_text'], data_language.iloc[:, 2:]]
+                      for language, data in grouped_data }
+    else:
+        text = data['comment_text']
+        labels = data.iloc[:, 2:]
+        data_dict = {'babel' : [text, labels]}
+    return data_dict
 
 def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
     from sklearn.preprocessing import FunctionTransformer

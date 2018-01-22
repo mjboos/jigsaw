@@ -27,12 +27,16 @@ import keras.preprocessing.text
 import enchant
 import string
 import json
+import copy
 
 corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans
 
-#TODO: make it possible to initialize with vocabulary
-#TODO: fasttext
+def make_default_language_dict(train_X, train_labels):
+    '''Returns a defaultdict that can be used in predict_for_language to predict a prior'''
+    from collections import defaultdict
+    from sklearn.dummy import DummyClassifier
+    return defaultdict(DummyClassifier().fit(train_X, train_labels))
 
 def text_to_word_sequence(text,
                           filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n',
@@ -218,7 +222,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
         self.correct_spelling = correct_spelling
 
         if tokenizer:
-            self.tokenizer = tokenizer
+            self.tokenizer = copy.deepcopy(tokenizer)
         else:
             self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
 
@@ -252,83 +256,6 @@ class Embedding_Blanko_DNN(BaseEstimator):
         X_t = self.tokenizer.transform(X)
         return self.model.predict(X_t)
 
-def LSTM_dropout_batchnorm_model(x):
-    x = Bidirectional(LSTM(50, return_sequences=True, dropout=0.2))(x)
-    x = GlobalMaxPool1D()(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
-    x = Dense(50, activation="relu")(x)
-    x = Dropout(0.2)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_layers_model(x):
-    x = Bidirectional(LSTM(100, return_sequences=True, dropout=0.3))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.3)(x)
-    x = Dense(150, activation="relu")(x)
-    x = Dropout(0.3)(x)
-    x = Dense(50, activation="relu")(x)
-    x = Dropout(0.3)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_avg_model(x):
-    x = Bidirectional(LSTM(150, return_sequences=True, dropout=0.5))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.5)(x)
-    x = Dense(200, activation="relu")(x)
-    x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_larger_layers_model(x):
-    x = Bidirectional(LSTM(150, return_sequences=True, dropout=0.5))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.5)(x)
-    x = Dense(200, activation="relu")(x)
-    x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_state_model(x):
-    x = Bidirectional(LSTM(150, return_state=True, dropout=0.5))(x)
-    x = Dropout(0.5)(x)
-    x = Dense(200, activation="relu")(x)
-    x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_large_layers_model(x):
-    x = Bidirectional(LSTM(150, return_sequences=True, dropout=0.5))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.5)(x)
-    x = Dense(200, activation="relu")(x)
-    x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_twice_model(x):
-    x = Bidirectional(LSTM(200, return_sequences=True, dropout=0.5))(x)
-    x = Bidirectional(LSTM(100, return_sequences=True, dropout=0.5))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.5)(x)
-    x = Dense(300, activation="relu")(x)
-    x = Dropout(0.8)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
-def LSTM_multi_model(x):
-    x = Bidirectional(LSTM(200, dropout=0.5))(x)
-    x = Bidirectional(LSTM(150, return_sequences=False, dropout=0.5))(x)
-    x = Bidirectional(LSTM(100, return_sequences=True, dropout=0.5))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(0.5)(x)
-    x = Dense(300, activation="relu")(x)
-    x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
-    return x
-
 def CNN_batchnorm_model(x):
     x = Conv1D(32, 5, activation='relu')(x)
     x = MaxPooling1D(5)(x)
@@ -353,6 +280,16 @@ def CNN_model(x):
     x = Dense(6, activation="sigmoid")(x)
     return x
 
+def LSTM_twice_dropout_model(x):
+    x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
+    x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(32, activation="relu")(x)
+    x = Dropout(0.5)(x)
+    x = Dense(6, activation="sigmoid")(x)
+    return x
+
 def LSTM_dropout_model(x):
     x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
     x = GlobalMaxPool1D()(x)
@@ -361,3 +298,4 @@ def LSTM_dropout_model(x):
     x = Dropout(0.5)(x)
     x = Dense(6, activation="sigmoid")(x)
     return x
+

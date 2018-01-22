@@ -25,9 +25,13 @@ def DNN_model(X, y, fit_args={}, **kwargs):
     model = models.Embedding_Blanko_DNN(**kwargs)
     return validator(model, X, y, fit_args=fit_args)
 
-def do_hyper_search(space, model_function):
+def do_hyper_search(space, model_function, **kwargs):
     '''Do a search over the space using a frozen model function'''
-    pass
+    trials = Trials()
+    best = fmin(model_function, space=space, trials=trials, **kwargs)
+
+def GBRT_model(X, y, **kwargs):
+
 
 #TODO: more information??
 def validator(estimator, X, y, cv=5, fit_args={}, **kwargs):
@@ -52,13 +56,16 @@ with open(fixed_params_file, 'r') as fl:
 train_text, train_labels = pre.load_data()
 test_text, _ = pre.load_data('test.csv')
 train_y = train_labels.values
+
 frozen_tokenizer = pre.KerasPaddingTokenizer(maxlen=fixed_params_dict['maxlen'],
         max_features=fixed_params_dict['max_features'])
 frozen_tokenizer.fit(pd.concat([train_text, test_text]))
 
-frozen_model_func = partial(CNN_model, train_text, train_y,
+frozen_model_func = partial(DNN_model, train_text, train_y,
         tokenizer=frozen_tokenizer, **fixed_params_dict)
 
 fit_args = {'batch_size' : 256, 'epochs' : 20,
                   'validation_split' : 0.1, 'callbacks' : callbacks_list}
-early = EarlyStopping(monitor="val_loss", mode="min", patience=3)
+early = EarlyStopping(monitor="val_loss", mode="min", patience=5)
+
+

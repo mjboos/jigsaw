@@ -40,7 +40,7 @@ fit_args = {'batch_size' : 128, 'epochs' : 20,
                   'validation_split' : 0.2, 'callbacks' : callbacks_list}
 
 train_text, train_labels = pre.load_data()
-test_text, test_labels = pre.load_data('test.csv')
+test_text, _ = pre.load_data('test.csv')
 
 train_y, test_y = train_labels.values, test_labels.values
 
@@ -81,23 +81,6 @@ if __name__=='__main__':
 
     embedding_dim = 300
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
-
-    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    logger = CSVLogger('../logs/300_fasttext_cnn.csv', separator=',', append=False)
-    callbacks_list = [logger, checkpoint, early] #early
-    fit_args['callbacks'] = callbacks_list
-    train_DNN(embedding, maxlen=maxlen, max_features=max_features,
-         model_function=models.CNN_model, embedding_dim=embedding_dim, tokenizer=frozen_tokenizer,
-         compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
-
-    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    logger = CSVLogger('../logs/300_fasttext_trainable_CNN.csv', separator=',', append=False)
-    callbacks_list = [logger, checkpoint, early] #early
-    fit_args['callbacks'] = callbacks_list
-    train_DNN(embedding, trainable=True, maxlen=maxlen,
-         max_features=max_features, model_function=models.CNN_model,
-         embedding_dim=embedding_dim, tokenizer=frozen_tokenizer,
-         compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']})
 
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
     logger = CSVLogger('../logs/300_fasttext_LSTM.csv', separator=',', append=False)
