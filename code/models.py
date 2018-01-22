@@ -14,6 +14,7 @@ import helpers as hlp
 import preprocessing as pre
 import sklearn.pipeline as pipe
 from sklearn.preprocessing import FunctionTransformer
+from sklearn.linear_model import LogisticRegression
 from keras.utils import to_categorical
 from keras.layers import Dense, Input, GlobalMaxPooling1D
 from keras.layers import Conv1D, MaxPooling1D, Embedding
@@ -32,10 +33,13 @@ import copy
 corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans
 
-def make_default_language_dict(train_X, train_labels):
+def make_default_language_dict(train_X=None, train_labels=None):
     '''Returns a defaultdict that can be used in predict_for_language to predict a prior'''
     from collections import defaultdict
     from sklearn.dummy import DummyClassifier
+    if not train_X or not train_labels:
+        _, train_labels = pre.load_data(language=False)
+        train_X = np.zeros_like(train_labels)[:,None]
     return defaultdict(DummyClassifier().fit(train_X, train_labels))
 
 def text_to_word_sequence(text,
@@ -81,12 +85,12 @@ class NBMLR(BaseEstimator):
 def tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
                             'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
                             'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1},
-                            estimator_args={'n_estimators' : 150}, model_func=None):
+                            estimator_args={}, model_func=None):
     '''Returns unfitted tfidf_NBSVM pipeline object'''
     if model_func is None:
-        model_func = GradientBoostingClassifier
-    return pipe.Pipeline(memory=memory, steps=[('tfidf', TfidfVectorizer(**pre_args)),
-                                               ('model', MultiOutputClassifier(model_func(**estimator_args)))])
+        model_func = NBMLR
+    return pipe.Pipeline(steps=[('tfidf', TfidfVectorizer(**pre_args)),
+                                               ('model', model_func(**estimator_args))])
 
 def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
     if model_function is None:

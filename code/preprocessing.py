@@ -49,13 +49,13 @@ def load_data(name='train.csv', preprocess=True, language=True):
     if preprocess:
         data = data_preprocessing(data)
     if language:
-        languages = pd.read_csv('language_{}'.format(name))
+        languages = pd.read_csv('language_{}'.format(name), header=None).squeeze()
         grouped_data = data.groupby(by=lambda x : languages[x])
-        data_dict = { language : [data_language['comment_text'], data_language.iloc[:, 2:]]
+        data_dict = { language : [data['comment_text'], data.iloc[:, 2:].values]
                       for language, data in grouped_data }
     else:
         text = data['comment_text']
-        labels = data.iloc[:, 2:]
+        labels = data.iloc[:, 2:].values
         data_dict = {'babel' : [text, labels]}
     return data_dict
 

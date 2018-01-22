@@ -31,11 +31,10 @@ fit_args = {'batch_size' : 128, 'epochs' : 20,
 
 # for now use only english as model
 train_per_language = pre.load_data()
-train_text, train_labels = train_per_language['en']
+train_text, train_y = train_per_language['en']
 test_per_language = pre.load_data('test.csv')
 test_text, _ = test_per_language['en']
 
-train_y = train_labels.values
 
 def train_DNN(embeddings_index, **kwargs):
     model = models.Embedding_Blanko_DNN(embeddings_index=embeddings_index, **kwargs)
@@ -49,7 +48,7 @@ def DNN_EN_to_language_dict(model_english, train_per_language, simple_for=['fr',
     if simple_for:
         for simple_lan in simple_for:
             language_dict[simple_lan] = models.tfidf_model().fit(*train_per_language[simple_lan])
-   hlp.write_model(hlp.predictions_for_language(language_dict))
+    hlp.write_model(hlp.predictions_for_language(language_dict))
 
 if __name__=='__main__':
     maxlen = 200
@@ -57,16 +56,4 @@ if __name__=='__main__':
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
 
-    embedding_dim = 300
-    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
-
-    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    logger = CSVLogger('../logs/300_fasttext_LSTM.csv', separator=',', append=False)
-    callbacks_list = [logger, checkpoint, early] #early
-    fit_args['callbacks'] = callbacks_list
-    DNN_EN_to_language_dict(
-         train_DNN(embedding, trainable=False, maxlen=maxlen,
-         max_features=max_features, model_function=models.LSTM_dropout_model,
-         embedding_dim=embedding_dim, tokenizer=frozen_tokenizer,
-         compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']}))
-
+    english_model = models.tfidf_model().fit(train_text, train_y)
