@@ -9,6 +9,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer, HashingVectorizer
 from sklearn.base import BaseEstimator
+from sklearn.decomposition import PCA
 from sklearn.ensemble import GradientBoostingClassifier
 import helpers as hlp
 import preprocessing as pre
@@ -199,9 +200,14 @@ def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxl
 
     return embedding_matrix
 
-def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False):
+def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False, preprocess_embedding=False, **kwargs):
     # load pre-trained word embeddings into an Embedding layer
     # note that we set trainable = False so as to keep the embeddings fixed
+    if preprocess_embedding:
+        pca = PCA(svd_solver='randomized', whiten=True, **kwargs)
+        embedding2 = pca.fit_transform(embedding_matrix[1:-1])
+        embedding_matrix[1:-1, :embedding2.shape[1]] = embedding2
+        embedding_matrix = embedding_matrix[:,: embedding2.shape[1]]
     embedding_layer = Embedding(embedding_matrix.shape[0],
                                 embedding_matrix.shape[1],
                                 weights=[embedding_matrix],
@@ -215,15 +221,17 @@ def add_oov_vector_and_prune(embedding_matrix, tokenizer):
 
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embeddings_index=None, max_features=20000, model_function=None, tokenizer=None,
-            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False,
-            compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}):
+            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, preprocess_embedding=False,
+            compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
         self.max_features = max_features
         self.trainable = trainable
         self.maxlen = maxlen
         self.embedding_dim = embedding_dim
         self.correct_spelling = correct_spelling
-
+        # test for embedding
+        self.preprocess_embedding = preprocess_embedding
+        self.embedding_args = embedding_args
         if tokenizer:
             self.tokenizer = copy.deepcopy(tokenizer)
             if tokenizer.is_trained:
@@ -245,7 +253,8 @@ class Embedding_Blanko_DNN(BaseEstimator):
             word_index = self.tokenizer.tokenizer.word_index
             embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
             embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
-            embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable)
+            embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen,
+                    trainable=self.trainable, preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32')
             embedded_sequences = embedding_layer(sequence_input)
             x = self.model_function(embedded_sequences)
@@ -258,7 +267,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             word_index = self.tokenizer.tokenizer.word_index
             embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
             embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
-            embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable)
+            embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable,  preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32')
             embedded_sequences = embedding_layer(sequence_input)
             x = self.model_function(embedded_sequences)
