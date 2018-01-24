@@ -26,47 +26,61 @@ lr = LearningRateScheduler(schedule)
 
 
 callbacks_list = [checkpoint, early] #early
-fit_args = {'batch_size' : 128, 'epochs' : 20,
+fit_args = {'batch_size' : 256, 'epochs' : 20,
                   'validation_split' : 0.2, 'callbacks' : callbacks_list}
 
-# for now use only english as model
-train_per_language = pre.load_data()
-train_text, train_labels = train_per_language['en']
-test_per_language = pre.load_data('test.csv')
-test_text, _ = test_per_language['en']
+train_text, train_y = pre.load_data()
+test_text, _  = pre.load_data('test.csv')
 
-train_y = train_labels.values
-
-def train_DNN(embeddings_index, **kwargs):
+def train_DNN(model_name, embeddings_index, **kwargs):
+    best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(embeddings_index=embeddings_index, **kwargs)
+    with open('../model_specs/{}.json'.format(model_name), 'w') as fl:
+        json.dump(model.model.to_json(), fl)
     model.fit(train_text, train_y, **fit_args)
     model.model.load_weights(best_weights_path)
     return model
 
-def DNN_EN_to_language_dict(model_english, train_per_language, simple_for=['fr', 'de', 'es', 'it']):
-    language_dict = models.make_default_language_dict()
-    language_dict['en'] = model_english
-    if simple_for:
-        for simple_lan in simple_for:
-            language_dict[simple_lan] = models.tfidf_model().fit(*train_per_language[simple_lan])
-   hlp.write_model(hlp.predictions_for_language(language_dict))
+def predict_for_all(model):
+    test_text, _ = pre.load_data('test.csv')
+    predictions = model.predict(test_text)
+    hlp.write_model(predictions)
 
-if __name__=='__main__':
-    maxlen = 200
-    max_features = 500000
-    frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
-    frozen_tokenizer.fit(pd.concat([train_text, test_text]))
-
-    embedding_dim = 300
-    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
-
+def fit_model(name, **kwargs):
+    best_weights_path="{}_best.hdf5".format(model_name)
+    logger = CSVLogger('../logs/{}.csv'.format(model_name), separator=',', append=False)
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    logger = CSVLogger('../logs/300_fasttext_LSTM.csv', separator=',', append=False)
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
-    DNN_EN_to_language_dict(
-         train_DNN(embedding, trainable=False, maxlen=maxlen,
-         max_features=max_features, model_function=models.LSTM_dropout_model,
-         embedding_dim=embedding_dim, tokenizer=frozen_tokenizer,
-         compilation_args={'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']}))
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    model = train_DNN(model_name, embedding, **kwargs)
+    return model
 
+def load_keras_model(name, **kwargs):
+    from keras.models import model_from_json
+    best_weights_path="{}_best.hdf5".format(model_name)
+    model_path = '../model_specs/{}.json'
+    model = model_from_json(model_path)
+    model.load_weights(best_weights_path)
+    return model
+
+def load_full_model(name, **kwargs):
+    best_weights_path="{}_best.hdf5".format(model_name)
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    model = models.Embedding_Blanko_DNN(embedding, **kwargs)
+    model.model.load_weights(best_weights_path)
+    return model
+
+if __name__=='__main__':
+    model_params = {
+        'max_features' : 500000, 'model_function' : models.LSTM_dropout_model, 'maxlen' : 200,
+            'embedding_dim' : 300,
+           'compilation_args' : {'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']}}
+
+    frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
+    frozen_tokenizer.fit(pd.concat([train_text, test_text]))
+    model_name = '300_fasttext_LSTM'
+
+#    model = load_keras_model(model_name, tokenizer=frozen_tokenizer, **model_params)
+#    model = fit_model(model_name, tokenizer=frozen_tokenizer, **mode_params )
+#    hlp.write_model(model.predict(test_text))

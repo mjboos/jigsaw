@@ -41,23 +41,23 @@ def clean_comment(text):
 def data_preprocessing(df):
     COMMENT = 'comment_text'
     df[COMMENT].fillna('_UNK_', inplace=True)
-    df[COMMENT] = df[COMMENT].apply(clean_comment)
+#    df[COMMENT] = df[COMMENT].apply(clean_comment)
     return df
 
-def load_data(name='train.csv', preprocess=True, language=True):
+def load_data(name='train.csv', preprocess=True):
     data = pd.read_csv('../input/{}'.format(name), encoding='utf-8')
     if preprocess:
         data = data_preprocessing(data)
-    if language:
-        languages = pd.read_csv('language_{}'.format(name), header=None).squeeze()
-        grouped_data = data.groupby(by=lambda x : languages[x])
-        data_dict = { language : [data['comment_text'], data.iloc[:, 2:].values]
-                      for language, data in grouped_data }
-    else:
-        text = data['comment_text']
-        labels = data.iloc[:, 2:].values
-        data_dict = {'babel' : [text, labels]}
-    return data_dict
+#    if language:
+#        languages = pd.read_csv('language_{}'.format(name), header=None).squeeze()
+#        grouped_data = data.groupby(by=lambda x : languages[x])
+#        data_dict = { language : [data['comment_text'], data.iloc[:, 2:].values]
+#                      for language, data in grouped_data }
+#    else:
+    text = data['comment_text']
+    labels = data.iloc[:, 2:].values
+#        data_dict = {'babel' : [text, labels]}
+    return text, labels
 
 def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
     from sklearn.preprocessing import FunctionTransformer
@@ -66,7 +66,7 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
     def __init__(self, max_features=20000, maxlen=200,
-            filters='!\'"#$%&()*+,-./:;<=>?@[\\]^_`{|}~1234567890\t\n', **kwargs):
+            filters='!\'"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n', **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
         self.is_trained = False

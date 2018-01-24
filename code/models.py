@@ -7,7 +7,7 @@ import joblib
 import pandas as pd, numpy as np
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.model_selection import cross_val_score
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer, HashingVectorizer
 from sklearn.base import BaseEstimator
 from sklearn.ensemble import GradientBoostingClassifier
 import helpers as hlp
@@ -38,9 +38,9 @@ def make_default_language_dict(train_X=None, train_labels=None):
     from collections import defaultdict
     from sklearn.dummy import DummyClassifier
     if not train_X or not train_labels:
-        _, train_labels = pre.load_data(language=False)
-        train_X = np.zeros_like(train_labels)[:,None]
-    return defaultdict(DummyClassifier().fit(train_X, train_labels))
+        train_X, train_labels = pre.load_data()
+    dummy_pipe = pipe.Pipeline(steps=[('pre',HashingVectorizer()),('model', MultiOutputClassifier(DummyClassifier()))]) 
+    return defaultdict(lambda:dummy_pipe.fit(train_X, train_labels))
 
 def text_to_word_sequence(text,
                           filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n',
@@ -57,10 +57,9 @@ def text_to_word_sequence(text,
 text.text_to_word_sequence = text_to_word_sequence
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
-
 class NBMLR(BaseEstimator):
-    def __init__(self, C=4, dual=True, **kwargs):
-        self.lr = LogisticRegression(C=C, dual=dual, **kwargs)
+    def __init__(self, **kwargs):
+        self.lr = LogisticRegression(**kwargs)
         self.r = None
 
     def __prior(self, y_i, y, X):
@@ -85,12 +84,12 @@ class NBMLR(BaseEstimator):
 def tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
                             'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
                             'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1},
-                            estimator_args={}, model_func=None):
+                            model_func=None, **kwargs):
     '''Returns unfitted tfidf_NBSVM pipeline object'''
     if model_func is None:
         model_func = NBMLR
     return pipe.Pipeline(steps=[('tfidf', TfidfVectorizer(**pre_args)),
-                                               ('model', model_func(**estimator_args))])
+                                               ('model', MultiOutputClassifier(model_func(**kwargs)))])
 
 def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
     if model_function is None:
@@ -171,7 +170,7 @@ def which_words_are_zero_vectors(embedding_matrix, word_index, oov_token):
     return word_list
 
 #TODO: more flexible spelling correction
-def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, diagnostics=False):
+def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, diagnostics=False, **kwargs):
     num_words = min(max_features, len(word_index))
     # add one element for zero vector
     embedding_matrix = np.zeros((num_words+1, embedding_dim))
@@ -227,6 +226,8 @@ class Embedding_Blanko_DNN(BaseEstimator):
 
         if tokenizer:
             self.tokenizer = copy.deepcopy(tokenizer)
+            if tokenizer.is_trained:
+                self.tokenizer.is_trained = True
         else:
             self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
 
@@ -240,25 +241,42 @@ class Embedding_Blanko_DNN(BaseEstimator):
         else:
             self.model_function = LSTM_dropout_model
 
+        if self.tokenizer.is_trained:
+            word_index = self.tokenizer.tokenizer.word_index
+            embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+            embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
+            embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable)
+            sequence_input = Input(shape=(self.maxlen,), dtype='int32')
+            embedded_sequences = embedding_layer(sequence_input)
+            x = self.model_function(embedded_sequences)
+            self.model = Model(inputs=sequence_input, outputs=x)
+            self.model.compile(**self.compilation_args)
+
     def fit(self, X, y, **kwargs):
         if not self.tokenizer.is_trained:
             self.tokenizer.fit(X)
+            word_index = self.tokenizer.tokenizer.word_index
+            embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+            embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
+            embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable)
+            sequence_input = Input(shape=(self.maxlen,), dtype='int32')
+            embedded_sequences = embedding_layer(sequence_input)
+            x = self.model_function(embedded_sequences)
+            self.model = Model(inputs=sequence_input, outputs=x)
+            self.model.compile(**self.compilation_args)
+
         X_t = self.tokenizer.transform(X)
-        word_index = self.tokenizer.tokenizer.word_index
-        embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
-        embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
-        embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable)
-        sequence_input = Input(shape=(self.maxlen,), dtype='int32')
-        embedded_sequences = embedding_layer(sequence_input)
-        x = self.model_function(embedded_sequences)
-        self.model = Model(inputs=sequence_input, outputs=x)
-        self.model.compile(**self.compilation_args)
         self.model.fit(X_t, y, **kwargs)
         return self
 
     def predict(self, X):
         X_t = self.tokenizer.transform(X)
         return self.model.predict(X_t)
+
+def transfer_model(old_model_path, new_model):
+    '''Transfers all the weights of the old model to the new one except the last layer'''
+    weights = old_model.model.get_weights()
+    pass
 
 def CNN_batchnorm_model(x):
     x = Conv1D(32, 5, activation='relu')(x)
@@ -284,6 +302,16 @@ def CNN_model(x):
     x = Dense(6, activation="sigmoid")(x)
     return x
 
+def LSTM_larger_dense_dropout_model(x):
+    x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(40, activation="relu")(x)
+    x = Dropout(0.5)(x)
+    x = Dense(6, activation="sigmoid")(x)
+    return x
+
+
 def LSTM_twice_dropout_model(x):
     x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
     x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
@@ -301,5 +329,17 @@ def LSTM_dropout_model(x):
     x = Dense(32, activation="relu")(x)
     x = Dropout(0.5)(x)
     x = Dense(6, activation="sigmoid")(x)
+    return x
+
+def LSTM_one_class(x, model_func=None):
+    if model_func is None:
+        model_func = LSTM_dropout_model
+    # not implemented for now
+    x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(32, activation="relu")(x)
+    x = Dropout(0.5)(x)
+    x = Dense(1, activation="sigmoid")(x)
     return x
 
