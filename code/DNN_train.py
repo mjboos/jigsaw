@@ -116,9 +116,10 @@ if __name__=='__main__':
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     model_name = '300_fasttext_finetune_LSTM'
-    model_old = hacky_load_LSTM()
-    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
-    fine_tune_model(model_name, model_old, embeddings_index=embedding, tokenizer=frozen_tokenizer, **model_params)
+    embeddings_index = hlp.get_fasttext_embedding('../yt_comments.vec')
+#    model_old = hacky_load_LSTM()
+#    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+#    fine_tune_model(model_name, model_old, embeddings_index=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    model = load_keras_model(model_name, tokenizer=frozen_tokenizer, **model_params)
 #    model = fit_model(model_name, tokenizer=frozen_tokenizer, **model_params)
 #    hlp.write_model(model.predict(test_text))
