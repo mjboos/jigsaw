@@ -32,16 +32,21 @@ def text_to_word_sequence(text,
 
 text.text_to_word_sequence = text_to_word_sequence
 
+control_chars = ''.join(map(unichr, range(0,32) + range(127,160)))
+
+control_char_re = re.compile('[%s]' % re.escape(control_chars))
+
+def remove_control_chars(s):
+    return control_char_re.sub('', s)
+
 def clean_comment(text):
-    control_chars = u'0123456789!\'"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n'
-    control_char_re = re.compile('[%s]' % re.escape(control_chars))
     return ' '.join(control_char_re.sub(' ', text).split(' '))
 
 @memory.cache
 def data_preprocessing(df):
     COMMENT = 'comment_text'
     df[COMMENT].fillna('_UNK_', inplace=True)
-#    df[COMMENT] = df[COMMENT].apply(clean_comment)
+    df[COMMENT] = df[COMMENT].apply(clean_comment)
     return df
 
 def load_data(name='train.csv', preprocess=True):

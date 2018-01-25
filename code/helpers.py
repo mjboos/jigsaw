@@ -76,3 +76,9 @@ def predictions_for_language(language_dict, test_data=None):
 def dump_trials(trials, fname=''):
     import time
     joblib.dump(trials, '../validation_logs/trial_{}_{}.json'.format(fname, time.strftime("%m%d-%H%M")))
+
+def update_embedding_vec(word_dict, path):
+    other_words = get_fasttext_embedding(path)
+    word_dict.update(other_words)
+    return word_dict
+

@@ -62,13 +62,12 @@ def predict_for_all(model):
     predictions = model.predict(test_text)
     hlp.write_model(predictions)
 
-def fit_model(name, **kwargs):
+def fit_model(name, embedding, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     logger = CSVLogger('../logs/{}.csv'.format(model_name), separator=',', append=False)
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
-    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
     model = train_DNN(model_name, embedding, **kwargs)
     return model
 
@@ -109,17 +108,17 @@ def fine_tune_model(model_name, old_model, **kwargs):
 
 if __name__=='__main__':
     model_params = {
-        'max_features' : 500000, 'model_function' : models.LSTM_one_class, 'maxlen' : 200,
+        'max_features' : 500000, 'model_function' : models.LSTM_dropout_model, 'maxlen' : 200,
             'embedding_dim' : 300,
            'compilation_args' : {'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']}}
 
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
-    model_name = '300_fasttext_finetune_LSTM'
-    embeddings_index = hlp.get_fasttext_embedding('../yt_comments.vec')
+    model_name = '300_fasttext_oov_words_LSTM'
+    embedding = hlp.get_fasttext_embedding('../wiki.en.vec')
+    embedding = hlp.update_embedding_vec(embedding, '../unknown_words.vec')
 #    model_old = hacky_load_LSTM()
-#    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
 #    fine_tune_model(model_name, model_old, embeddings_index=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    model = load_keras_model(model_name, tokenizer=frozen_tokenizer, **model_params)
-#    model = fit_model(model_name, tokenizer=frozen_tokenizer, **model_params)
-#    hlp.write_model(model.predict(test_text))
+    model = fit_model(model_name, embedding, tokenizer=frozen_tokenizer, **model_params)
+    hlp.write_model(model.predict(test_text))
