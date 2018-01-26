@@ -40,13 +40,19 @@ def remove_control_chars(s):
     return control_char_re.sub('', s)
 
 def clean_comment(text):
-    return ' '.join(control_char_re.sub(' ', text).split(' '))
+    import unicodedata as ud
+    text = ud.normalize('NFD', text)
+    text = re.sub(r'[^\x00-\x7f]', r' ' , text)
+    #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
+    # add space between punctuation
+    s = re.sub(r"([.,!?():;_^`<=>$%&@|{}\-+#~*\/])", r' \1 ', text)
+    s = re.sub('\s{2,}', ' ', s)
+    return s.encode('utf-8')
 
 @memory.cache
 def data_preprocessing(df):
-    COMMENT = 'comment_text'
-    df[COMMENT].fillna('_UNK_', inplace=True)
-    df[COMMENT] = df[COMMENT].apply(clean_comment)
+    df['comment_text'].fillna('  ', inplace=True)
+    df['comment_text'] = df['comment_text'].apply(clean_comment)
     return df
 
 def load_data(name='train.csv', preprocess=True):
@@ -71,7 +77,7 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
     def __init__(self, max_features=20000, maxlen=200,
-            filters='!\'"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n', **kwargs):
+            filters='\'\"\t\n', **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
         self.is_trained = False

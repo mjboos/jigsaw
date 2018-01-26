@@ -26,19 +26,30 @@ lr = LearningRateScheduler(schedule)
 
 
 callbacks_list = [checkpoint, early] #early
-fit_args = {'batch_size' : 256, 'epochs' : 10,
+fit_args = {'batch_size' : 256, 'epochs' : 15,
                   'validation_split' : 0.2, 'callbacks' : callbacks_list}
 
 train_text, train_y = pre.load_data()
 test_text, _  = pre.load_data('test.csv')
 
-def train_DNN(model_name, embeddings_index, **kwargs):
+def train_DNN(model_name, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
-    model = models.Embedding_Blanko_DNN(embeddings_index=embeddings_index, **kwargs)
+    model = models.Embedding_Blanko_DNN(**kwargs)
     with open('../model_specs/{}.json'.format(model_name), 'w') as fl:
         json.dump(model.model.to_json(), fl)
     model.fit(train_text, train_y, **fit_args)
     model.model.load_weights(best_weights_path)
+    return model
+
+def continue_training_DNN(model_name, **kwargs):
+    best_weights_path="{}_best.hdf5".format(model_name)
+    model = models.Embedding_Blanko_DNN(**kwargs)
+    model.model.load_weights(best_weights_path)
+    logger = CSVLogger('../logs/{}.csv'.format(model_name), separator=',', append=True)
+    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+    callbacks_list = [logger, checkpoint, early] #early
+    fit_args['callbacks'] = callbacks_list
+    model.fit(train_text, train_y, **fit_args)
     return model
 
 def continue_training_DNN_one_output(model_name, i, weights, **kwargs):
@@ -62,13 +73,13 @@ def predict_for_all(model):
     predictions = model.predict(test_text)
     hlp.write_model(predictions)
 
-def fit_model(name, embedding, **kwargs):
+def fit_model(model_name, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     logger = CSVLogger('../logs/{}.csv'.format(model_name), separator=',', append=False)
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
-    model = train_DNN(model_name, embedding, **kwargs)
+    model = train_DNN(model_name, **kwargs)
     return model
 
 def load_keras_model(model_name, **kwargs):
@@ -108,17 +119,13 @@ def fine_tune_model(model_name, old_model, **kwargs):
 
 if __name__=='__main__':
     model_params = {
-        'max_features' : 500000, 'model_function' : models.LSTM_dropout_model, 'maxlen' : 200,
+        'max_features' : 500000, 'model_function' : models.LSTM_dropout_model, 'maxlen' : 500,
             'embedding_dim' : 300,
            'compilation_args' : {'optimizer' : 'adam', 'loss':'binary_crossentropy','metrics':['accuracy']}}
 
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
-    model_name = '300_fasttext_oov_words_LSTM'
-    embedding = hlp.get_fasttext_embedding('../wiki.en.vec')
-    embedding = hlp.update_embedding_vec(embedding, '../unknown_words.vec')
-#    model_old = hacky_load_LSTM()
-#    fine_tune_model(model_name, model_old, embeddings_index=embedding, tokenizer=frozen_tokenizer, **model_params)
-#    model = load_keras_model(model_name, tokenizer=frozen_tokenizer, **model_params)
-    model = fit_model(model_name, embedding, tokenizer=frozen_tokenizer, **model_params)
-    hlp.write_model(model.predict(test_text))
+    model_name = '300_fasttext_CC_LSTM'
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    model = fit_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
+#    hlp.write_model(model.predict(test_text))

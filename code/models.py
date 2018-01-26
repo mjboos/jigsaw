@@ -110,10 +110,10 @@ def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_
     return pipe.Pipeline(steps=[('tokenizer', pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)),
                                  ('BiLSTM', model)])
 
-def process_word(word, i, max_features, embedding_dim, correct_spelling, corr_dict1, embeddings_index):
+def process_word(word, i, max_features, embedding_dim, correct_spelling, corr_dict1, embedding):
     if i >= max_features:
         return np.zeros((1, embedding_dim))
-    embedding_vector = embeddings_index.get(word)
+    embedding_vector = embedding.get(word)
     if embedding_vector is not None:
         # words not found in embedding index will be all-zeros.
         return  embedding_vector[None]
@@ -122,7 +122,7 @@ def process_word(word, i, max_features, embedding_dim, correct_spelling, corr_di
         suggestions = corr_dict1.suggest(word)
         if len(suggestions) > 0:
             suggested_word = suggestions[0]
-            embedding_vector = embeddings_index.get(suggested_word)
+            embedding_vector = embedding.get(suggested_word)
             if embedding_vector is not None:
                 return embedding_vector[None]
     return np.zeros((1, embedding_dim))
@@ -171,14 +171,14 @@ def which_words_are_zero_vectors(embedding_matrix, word_index, oov_token):
     return word_list
 
 #TODO: more flexible spelling correction
-def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, diagnostics=False, **kwargs):
+def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, diagnostics=False, **kwargs):
     num_words = min(max_features, len(word_index))
     # add one element for zero vector
     embedding_matrix = np.zeros((num_words+1, embedding_dim))
     for word, i in word_index.items():
         if i >= max_features:
             continue
-        embedding_vector = embeddings_index.get(word)
+        embedding_vector = embedding.get(word)
         if embedding_vector is not None:
             # words not found in embedding index will be all-zeros.
             embedding_matrix[i] = embedding_vector
@@ -186,7 +186,7 @@ def make_embedding_matrix(embeddings_index, word_index, max_features=20000, maxl
             if correct_spelling:
                 # replace with autocorrected word IF this word is in embeddings
                 suggested_word = correct_spelling(word)
-                embedding_vector = embeddings_index.get(suggested_word)
+                embedding_vector = embedding.get(suggested_word)
                 if embedding_vector is not None:
                     embedding_matrix[i] = embedding_vector
 
@@ -220,7 +220,7 @@ def add_oov_vector_and_prune(embedding_matrix, tokenizer):
     return prune_matrix_and_tokenizer(embedding_matrix, tokenizer)
 
 class Embedding_Blanko_DNN(BaseEstimator):
-    def __init__(self, embeddings_index=None, max_features=20000, model_function=None, tokenizer=None,
+    def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,
             maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, preprocess_embedding=False,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
@@ -239,10 +239,10 @@ class Embedding_Blanko_DNN(BaseEstimator):
         else:
             self.tokenizer = pre.KerasPaddingTokenizer(max_features=max_features, maxlen=maxlen)
 
-        if embeddings_index:
-            self.embeddings_index = embeddings_index
+        if embedding:
+            self.embedding = embedding
         else:
-            self.embeddings_index = hlp.get_glove_embedding('../glove.6B.100d.txt')
+            self.embedding = hlp.get_glove_embedding('../glove.6B.100d.txt')
 
         if model_function:
             self.model_function = model_function
@@ -251,7 +251,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
 
         if self.tokenizer.is_trained:
             word_index = self.tokenizer.tokenizer.word_index
-            embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+            embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
             embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen,
                     trainable=self.trainable, preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
@@ -265,7 +265,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
         if not self.tokenizer.is_trained:
             self.tokenizer.fit(X)
             word_index = self.tokenizer.tokenizer.word_index
-            embedding_matrix = make_embedding_matrix(self.embeddings_index, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+            embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
             embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable,  preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32')
