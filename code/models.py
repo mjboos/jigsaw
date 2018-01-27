@@ -23,6 +23,7 @@ from keras.models import Model
 from keras.models import Model
 from keras.layers import Dense, Embedding, Input
 from keras.layers import LSTM, Bidirectional, GlobalMaxPool1D, Dropout, BatchNormalization, MaxPooling1D
+from keras.layers import CuDNNLSTM, CuDNNGRU, GRU
 from keras.preprocessing import text, sequence
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 import keras.preprocessing.text
@@ -95,7 +96,7 @@ def tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
 def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
     if model_function is None:
         model_function = LSTM_dropout_model
-    inp = Input(shape=(maxlen, ))
+    inp = Input(shape=(maxlen, ), name='main_input')
     x = Embedding(max_features, embed_size)(inp)
     x = Bidirectional(LSTM(50, return_sequences=True))(x)
     x = GlobalMaxPool1D()(x)
@@ -257,8 +258,12 @@ class Embedding_Blanko_DNN(BaseEstimator):
                     trainable=self.trainable, preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32')
             embedded_sequences = embedding_layer(sequence_input)
-            x = self.model_function(embedded_sequences)
-            self.model = Model(inputs=sequence_input, outputs=x)
+            outputs, aux_input = self.model_function(embedded_sequences)
+            if aux_input:
+                inputs = [sequence_input, aux_input]
+            else:
+                inputs = sequence_input
+            self.model = Model(inputs=inputs, outputs=outputs)
             self.model.compile(**self.compilation_args)
 
     def fit(self, X, y, **kwargs):
@@ -268,10 +273,14 @@ class Embedding_Blanko_DNN(BaseEstimator):
             embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
             embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable,  preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
-            sequence_input = Input(shape=(self.maxlen,), dtype='int32')
+            sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
             embedded_sequences = embedding_layer(sequence_input)
-            x = self.model_function(embedded_sequences)
-            self.model = Model(inputs=sequence_input, outputs=x)
+            outputs, aux_input = self.model_function(embedded_sequences)
+            if aux_input:
+                inputs = [sequence_input, aux_input]
+            else:
+                inputs = sequence_input
+            self.model = Model(inputs=inputs, outputs=outputs)
             self.model.compile(**self.compilation_args)
 
         X_t = self.tokenizer.transform(X)
@@ -331,6 +340,31 @@ def LSTM_twice_dropout_model(x):
     x = Dense(6, activation="sigmoid")(x)
     return x
 
+def RNN_general(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5):
+    if rnn_func is None:
+        rnn_func = LSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    for rnn_size in hidden_rnn:
+        x = Bidirectional(rnn_func(rnn_size, return_sequences=True, dropout=dropout))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(dropout)(x)
+    x = Dense(hidden_dense, activation='relu')(x)
+    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x
+
+def LSTM_CUDA_dropout_model(x):
+    x = Bidirectional(CuDNNLSTM(64, return_sequences=True, dropout=0.5))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(32, activation="relu")(x)
+    x = Dropout(0.5)(x)
+    x = Dense(6, activation="sigmoid")(x)
+    return x, None
+
 def LSTM_dropout_model(x):
     x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
     x = GlobalMaxPool1D()(x)
@@ -338,7 +372,7 @@ def LSTM_dropout_model(x):
     x = Dense(32, activation="relu")(x)
     x = Dropout(0.5)(x)
     x = Dense(6, activation="sigmoid")(x)
-    return x
+    return x, None
 
 def LSTM_one_class(x, model_func=None):
     if model_func is None:
@@ -351,4 +385,15 @@ def LSTM_one_class(x, model_func=None):
     x = Dropout(0.5)(x)
     x = Dense(1, activation="sigmoid")(x)
     return x
+
+def LSTM_aux_output_model(x):
+    x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(0.5)(x)
+    dense_layer = Dense(32, activation="relu")(x)
+    x = Dropout(0.5)(dense_layer)
+    output = Dense(6, activation="sigmoid")(x)
+    other_output = Dense(1, name='aux_output')(dense_layer)
+    return [output, other_output], None
+
 
