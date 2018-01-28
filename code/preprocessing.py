@@ -85,6 +85,7 @@ class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
 
     def fit(self, list_of_sentences, y=None, **kwargs):
         self.tokenizer.fit_on_texts(list(list_of_sentences))
+        print('fit this thing')
         self.is_trained = True
         return self
 

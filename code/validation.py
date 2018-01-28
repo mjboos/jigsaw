@@ -14,13 +14,11 @@ import helpers as hlp
 import models
 import preprocessing as pre
 import json
+from keras import optimizers
 import time
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateScheduler, CSVLogger
 import feature_engineering
-
-#TODO: implement hyper parameter search
-#TODO: get vocabulary on full corpus
 
 def DNN_model(X, y, fit_args={}, **kwargs):
     '''Builds and evaluates a CNN on train_text, train_labels'''
@@ -41,43 +39,40 @@ def RF_model(X, y, kwargs):
     return validator(model, X, y)
 
 #TODO: more information??
-def validator(estimator, X, y, cv=5, fit_args={}, **kwargs):
+def validator(estimator, X, y, cv=3, fit_args={}, **kwargs):
     '''Validate mean log loss of model'''
     kfold = KFold(n_splits=cv, shuffle=True)
     scores = []
     Xs = np.zeros((len(X),1), dtype='int8')
     for train, test in kfold.split(Xs):
-#        train_x = X[train] #[X[i] for i in train]
-#        test_x = X[test]# for i in test]
-        estimator.fit(X[train], y[train], **fit_args)
-        predictions = estimator.predict(X[test])
+        train_x = [X[i] for i in train]
+        test_x = [X[i] for i in test]
+        estimator.fit(train_x, y[train], **fit_args)
+        predictions = estimator.predict(test_x)
         scores.append(hlp.mean_log_loss(y[test], predictions))
     score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
     return score_dict
 
-#for now for ALL languages
-def validate_token_model(model_name, model_function, space, fixed_params_file='../parameters/fixed.json'):
-    with open(fixed_params_file, 'r') as fl:
-        fixed_params_dict = json.load(fl)
-
-    train_text, train_y = pre.load_data((
+#TODO: add other params
+#TODO: model_func_param
+def validate_token_model(model_name, model_function, space, maxlen=300, max_features=500000):
+    train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
 
-    frozen_tokenizer = pre.KerasPaddingTokenizer(maxlen=fixed_params_dict['maxlen'],
-            max_features=fixed_params_dict['max_features'])
+    frozen_tokenizer = pre.KerasPaddingTokenizer(maxlen=maxlen,
+            max_features=max_features)
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
-
-    fit_args = {'batch_size' : 256, 'epochs' : 20,
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    compilation_args = {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}
+    callbacks_list = [EarlyStopping(monitor="val_loss", mode="min", patience=5)]
+    fit_args = {'batch_size' : 256, 'epochs' : 15,
                       'validation_split' : 0.1, 'callbacks' : callbacks_list}
-
     # freeze all constant parameters
     frozen_model_func = partial(model_function, train_text, train_y, fit_args=fit_args,
-            tokenizer=frozen_tokenizer, **fixed_params_dict)
-
-    early = EarlyStopping(monitor="val_loss", mode="min", patience=5)
+            tokenizer=frozen_tokenizer, embedding=embedding, compilation_args=compilation_args)
 
     trials = Trials()
-    best = fmin(model_function, space=space, algo=tpe.suggest, max_evals=10, trials=trials)
+    best = fmin(model_function, space=space, algo=tpe.suggest, max_evals=20, trials=trials)
     hlp.dump_trials(trials, fname=model_name)
     return best
 
@@ -95,10 +90,13 @@ def validate_feature_model(model_name, model_function, space, fixed_params_file=
     return best
 
 if __name__=='__main__':
-    feature_models_to_test = {
-            'gbc' : (GBC_model, {'n_estimators' : 80+hp.randint('n_estimators', 100), 'max_depth' : 1 + hp.randint('max_depth', 6)}),
-            'rf' : (RF_model, {'n_estimators' : 5 + hp.randint('n_estimators', 30)})
-            }
-    for model_name, (func, space) in feature_models_to_test.iteritems():
-        best = validate_feature_model(model_name, func, space)
+    DNN_search_space = {'model_function' : {'no_rnn_layers' : hp.choice('no_rnn_layers', [1, 2]),
+#            'rnn_func' : hp.choice('rnn_func', [models.CuDNNLSTM, models.CuDNNGRU]),
+            'hidden_rnn' : hp.quniform('hidden_rnn', 32,128,16),
+            'hidden_dense' : hp.quniform('hidden_dense', 16, 64, 8),
+            'dropout' : hp.uniform('dropout', 0.3, 0.9)}}
+    token_models_to_test = {
+            'DNN' : (DNN_model, DNN_search_space)}
+    for model_name, (func, space) in token_models_to_test.iteritems():
+        best = validate_token_model(model_name, func, space)
         joblib.dump(best, 'best_{}.pkl'.format(model_name))

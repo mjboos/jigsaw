@@ -1,3 +1,4 @@
+from __future__ import division
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
@@ -7,6 +8,7 @@ import json
 import joblib
 import preprocessing as pre
 import pandas as pd
+from collections import Counter
 
 memory = joblib.Memory('/home/mboos/joblib')
 
@@ -20,6 +22,23 @@ def mean_log_loss(y_test, y_pred):
 def correct_predictions(predictions, factor=0.5):
     corrected = logit(predictions)-0.5
     return np.exp(corrected)/(np.exp(corrected)+1)
+
+def get_class_weights(y_mat, smooth_factor=0.):
+    """
+    Returns the weights for each class based on the frequencies of the samples
+    :param smooth_factor: factor that smooths extremely uneven weights
+    :param y: list of true labels (the labels must be hashable)
+    :return: dictionary with the weight for each class
+    """
+    mat_counts = y_mat.sum(axis=0)
+
+    if smooth_factor > 0:
+        p = mat_counts.max() * smooth_factor
+        mat_counts += p
+    return mat_counts.max() / mat_counts
+
+def make_weight_matrix(y_mat, weights):
+    return np.tile(weights[None], (y_mat.shape[0], 1))
 
 def write_model(predictions, correct=correct_predictions,
                 cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']):

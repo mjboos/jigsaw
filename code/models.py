@@ -18,22 +18,33 @@ from sklearn.preprocessing import FunctionTransformer
 from sklearn.linear_model import LogisticRegression
 from keras.utils import to_categorical
 from keras.layers import Dense, Input, GlobalMaxPooling1D
+import tensorflow as tf
 from keras.layers import Conv1D, MaxPooling1D, Embedding
 from keras.models import Model
-from keras.models import Model
 from keras.layers import Dense, Embedding, Input
+from keras import optimizers
 from keras.layers import LSTM, Bidirectional, GlobalMaxPool1D, Dropout, BatchNormalization, MaxPooling1D
 from keras.layers import CuDNNLSTM, CuDNNGRU, GRU
 from keras.preprocessing import text, sequence
 from keras.callbacks import EarlyStopping, ModelCheckpoint
+from functools import partial
 import keras.preprocessing.text
-import enchant
 import string
 import json
+import enchant
 import copy
 
 corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans
+memory = joblib.Memory(cachedir='/home/mboos/joblib')
+
+@memory.cache
+def get_fixed_DNN_params():
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 300,
+        'embedding_dim' : 300, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99)}}
+    return model_params
 
 def make_default_language_dict(train_X=None, train_labels=None):
     '''Returns a defaultdict that can be used in predict_for_language to predict a prior'''
@@ -57,7 +68,6 @@ def text_to_word_sequence(text,
     return [i for i in seq if i]
 
 text.text_to_word_sequence = text_to_word_sequence
-memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
 class NBMLR(BaseEstimator):
     def __init__(self, **kwargs):
@@ -220,9 +230,12 @@ def add_oov_vector_and_prune(embedding_matrix, tokenizer):
     embedding_matrix = np.vstack([embedding_matrix, np.zeros((1, embedding_matrix.shape[1]))])
     return prune_matrix_and_tokenizer(embedding_matrix, tokenizer)
 
+def make_model_function(**kwargs):
+    return partial(RNN_general, **kwargs)
+
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,
-            maxlen=200, embedding_dim=100, correct_spelling=False, trainable=False, preprocess_embedding=False,
+            maxlen=200, embedding_dim=300, correct_spelling=False, trainable=False, preprocess_embedding=False,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
         self.max_features = max_features
@@ -246,9 +259,12 @@ class Embedding_Blanko_DNN(BaseEstimator):
             self.embedding = hlp.get_glove_embedding('../glove.6B.100d.txt')
 
         if model_function:
-            self.model_function = model_function
+            if callable(model_function):
+                self.model_function = model_function
+            else:
+                self.model_function = make_model_function(**model_function)
         else:
-            self.model_function = LSTM_dropout_model
+            self.model_function = RNN_general
 
         if self.tokenizer.is_trained:
             word_index = self.tokenizer.tokenizer.word_index
@@ -256,7 +272,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen,
                     trainable=self.trainable, preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
-            sequence_input = Input(shape=(self.maxlen,), dtype='int32')
+            sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
             embedded_sequences = embedding_layer(sequence_input)
             outputs, aux_input = self.model_function(embedded_sequences)
             if aux_input:
@@ -283,13 +299,16 @@ class Embedding_Blanko_DNN(BaseEstimator):
             self.model = Model(inputs=inputs, outputs=outputs)
             self.model.compile(**self.compilation_args)
 
-        X_t = self.tokenizer.transform(X)
-        self.model.fit(X_t, y, **kwargs)
+        X['main_input'] = self.tokenizer.transform(X['main_input'])
+        self.model.fit(X, y, **kwargs)
         return self
 
     def predict(self, X):
         X_t = self.tokenizer.transform(X)
         return self.model.predict(X_t)
+
+def weighted_binary_crossentropy(y_true, y_pred, weights):
+    return tf.keras.backend.mean(tf.multiply(tf.keras.backend.binary_crossentropy(y_true, y_pred), weights), axis=-1)
 
 def transfer_model(old_model_path, new_model):
     '''Transfers all the weights of the old model to the new one except the last layer'''
@@ -340,6 +359,24 @@ def LSTM_twice_dropout_model(x):
     x = Dense(6, activation="sigmoid")(x)
     return x
 
+def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1):
+    if rnn_func is None:
+        rnn_func = LSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
+    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(dropout)(x)
+    x = Dense(hidden_dense, activation='relu')(x)
+    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return [x, aux_dense], None
+
 def RNN_general(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5):
     if rnn_func is None:
         rnn_func = LSTM
@@ -348,13 +385,14 @@ def RNN_general(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=Non
     if len(hidden_rnn) != no_rnn_layers:
         raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
     for rnn_size in hidden_rnn:
-        x = Bidirectional(rnn_func(rnn_size, return_sequences=True, dropout=dropout))(x)
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
     x = GlobalMaxPool1D()(x)
     x = Dropout(dropout)(x)
     x = Dense(hidden_dense, activation='relu')(x)
     x = Dropout(dropout)(x)
     x = Dense(6, activation="sigmoid", name='main_output')(x)
-    return x
+    return x, None
 
 def LSTM_CUDA_dropout_model(x):
     x = Bidirectional(CuDNNLSTM(64, return_sequences=True, dropout=0.5))(x)
