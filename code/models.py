@@ -235,7 +235,7 @@ def make_model_function(**kwargs):
 
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,
-            maxlen=200, embedding_dim=300, correct_spelling=False, trainable=False, preprocess_embedding=False,
+            maxlen=300, embedding_dim=300, correct_spelling=False, trainable=False, preprocess_embedding=False,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
         self.max_features = max_features
@@ -298,8 +298,11 @@ class Embedding_Blanko_DNN(BaseEstimator):
                 inputs = sequence_input
             self.model = Model(inputs=inputs, outputs=outputs)
             self.model.compile(**self.compilation_args)
+        if isinstance(X, dict):
+            X['main_input'] = self.tokenizer.transform(X['main_input'])
+        else:
+            X = self.tokenizer.transform(X)
 
-        X['main_input'] = self.tokenizer.transform(X['main_input'])
         self.model.fit(X, y, **kwargs)
         return self
 
@@ -369,9 +372,9 @@ def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=No
     for rnn_size in hidden_rnn:
         x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
-    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(x)
     x = GlobalMaxPool1D()(x)
     x = Dropout(dropout)(x)
+    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(x)
     x = Dense(hidden_dense, activation='relu')(x)
     x = Dropout(dropout)(x)
     x = Dense(6, activation="sigmoid", name='main_output')(x)
@@ -386,10 +389,10 @@ def RNN_general(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=Non
         raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
     for rnn_size in hidden_rnn:
         x = Dropout(dropout)(x)
-        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
     x = GlobalMaxPool1D()(x)
     x = Dropout(dropout)(x)
-    x = Dense(hidden_dense, activation='relu')(x)
+    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout)(x)
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return x, None

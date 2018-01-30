@@ -41,8 +41,10 @@ def remove_control_chars(s):
 
 def clean_comment(text):
     import unicodedata as ud
-    text = ud.normalize('NFD', text)
+    text = ud.normalize('NFD', text.encode('utf-8').decode('utf-8'))
     text = re.sub(r'[^\x00-\x7f]', r' ' , text)
+    text = re.sub(r'[\n\r]', r' ', text)
+    text = re.sub(r'["]', r' ', text)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
     # add space between punctuation
     s = re.sub(r"([.,!?():;_^`<=>$%&@|{}\-+#~*\/])", r' \1 ', text)
@@ -51,7 +53,7 @@ def clean_comment(text):
 
 @memory.cache
 def data_preprocessing(df):
-    df['comment_text'].fillna('  ', inplace=True)
+    df['comment_text'].fillna(' ', inplace=True)
     df['comment_text'] = df['comment_text'].apply(clean_comment)
     return df
 

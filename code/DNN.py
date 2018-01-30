@@ -21,25 +21,32 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateSchedule
 import json
 import feature_engineering
 from functools import partial
+from keras.utils import plot_model
 
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
-def train_DNN(model_name, *args, **kwargs):
+#TODO: make more things optional
+
+def train_DNN(model_name, fit_args, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(**kwargs)
     with open('../model_specs/{}.json'.format(model_name), 'w') as fl:
         json.dump(model.model.to_json(), fl)
+    plot_model(model.model, '../model_specs/{}.png'.format(model_name), show_shapes=True)
     model.fit(*args, **fit_args)
     model.model.load_weights(best_weights_path)
     return model
 
-def make_callback_list(model_name, patience=5):
+def make_callback_list(model_name, save_weights=True, patience=5):
     '''Makes and returns a callback list for logging, saving the best model, and early stopping with patience=patience'''
     best_weights_path="{}_best.hdf5".format(model_name)
     early = EarlyStopping(monitor="val_loss", mode="min", patience=patience)
     logger = CSVLogger('../logs/{}.csv'.format(model_name), separator=',', append=False)
-    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    return [logger, checkpoint, early]
+    checkpoints = [early, logger]
+    if save_weights:
+        checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+        checkpoints.append(checkpoint)
+    return checkpoints
 
 def continue_training_DNN(model_name, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
@@ -47,6 +54,7 @@ def continue_training_DNN(model_name, *args, **kwargs):
     model.model.load_weights(best_weights_path)
     logger = CSVLogger('../logs/{}_more.csv'.format(model_name), separator=',', append=True)
     best_weights_path="{}_more_best.hdf5".format(model_name)
+    early = EarlyStopping(monitor="val_loss", mode="min", patience=10)
     checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
     callbacks_list = [logger, checkpoint, early] #early
     fit_args['callbacks'] = callbacks_list
@@ -74,13 +82,9 @@ def predict_for_all(model):
     predictions = model.predict(test_text)
     hlp.write_model(predictions)
 
-def fit_model(model_name, *args, **kwargs):
-    best_weights_path="{}_best.hdf5".format(model_name)
-    logger = CSVLogger('../logs/{}.csv'.format(model_name), separator=',', append=False)
-    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    callbacks_list = [logger, checkpoint, early] #early
-    fit_args['callbacks'] = callbacks_list
-    model = train_DNN(model_name, *args, **kwargs)
+def fit_model(model_name, fit_args, *args, **kwargs):
+    fit_args['callbacks'] = make_callback_list(model_name)
+    model = train_DNN(model_name, fit_args, *args, **kwargs)
     return model
 
 def load_keras_model(model_name, **kwargs):

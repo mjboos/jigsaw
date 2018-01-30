@@ -101,3 +101,12 @@ def update_embedding_vec(word_dict, path):
     word_dict.update(other_words)
     return word_dict
 
+def join_embedding_vec(word_dict, path):
+    other_embeddings = get_fasttext_embedding(path)
+    n_dim = other_embeddings.values()[0].shape
+    for word in word_dict:
+        try:
+            word_dict[word] = np.concatenate([word_dict[word], other_embeddings[word]])
+        except KeyError:
+            word_dict[word] = np.concatenate([word_dict[word], np.zeros(n_dim)])
+    return word_dict
