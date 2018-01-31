@@ -42,7 +42,6 @@ def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=5):
     K.clear_session()
     return score_dict
 
-
 def do_hyper_search(space, model_function, **kwargs):
     '''Do a search over the space using a frozen model function'''
     trials = Trials()

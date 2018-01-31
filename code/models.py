@@ -380,9 +380,9 @@ def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=No
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
-def RNN_general(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5):
+def RNN_general(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
     if rnn_func is None:
-        rnn_func = LSTM
+        rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
         hidden_rnn = [hidden_rnn] * no_rnn_layers
     if len(hidden_rnn) != no_rnn_layers:
@@ -392,6 +392,7 @@ def RNN_general(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=Non
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
     x = GlobalMaxPool1D()(x)
     x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
     x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout)(x)
     x = Dense(6, activation="sigmoid", name='main_output')(x)

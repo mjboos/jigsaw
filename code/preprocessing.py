@@ -44,16 +44,15 @@ def clean_comment(text):
     text = ud.normalize('NFD', text.encode('utf-8').decode('utf-8'))
     text = re.sub(r'[^\x00-\x7f]', r' ' , text)
     text = re.sub(r'[\n\r]', r' ', text)
-    text = re.sub(r'["]', r' ', text)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
     # add space between punctuation
-    s = re.sub(r"([.,!?():;_^`<=>$%&@|{}\-+#~*\/])", r' \1 ', text)
+    s = re.sub(r'([.,!?():;_^`<=>$%&@|{}\-+#~*\/"])', r' \1 ', text)
     s = re.sub('\s{2,}', ' ', s)
     return s.encode('utf-8')
 
 @memory.cache
 def data_preprocessing(df):
-    df['comment_text'].fillna(' ', inplace=True)
+    df['comment_text'].fillna('', inplace=True)
     df['comment_text'] = df['comment_text'].apply(clean_comment)
     return df
 
@@ -79,7 +78,7 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
     def __init__(self, max_features=20000, maxlen=200,
-            filters='\'\"\t\n', **kwargs):
+            filters='\t\n', **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
         self.is_trained = False
@@ -87,7 +86,6 @@ class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
 
     def fit(self, list_of_sentences, y=None, **kwargs):
         self.tokenizer.fit_on_texts(list(list_of_sentences))
-        print('fit this thing')
         self.is_trained = True
         return self
 

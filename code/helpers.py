@@ -40,7 +40,7 @@ def get_class_weights(y_mat, smooth_factor=0.):
 def make_weight_matrix(y_mat, weights):
     return np.tile(weights[None], (y_mat.shape[0], 1))
 
-def write_model(predictions, correct=correct_predictions,
+def write_model(predictions, correct=None,
                 cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']):
     import pandas as pd
     import time
