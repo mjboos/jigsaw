@@ -52,7 +52,7 @@ def clean_comment(text):
 
 @memory.cache
 def data_preprocessing(df):
-    df['comment_text'].fillna('', inplace=True)
+    df['comment_text'].fillna('  ', inplace=True)
     df['comment_text'] = df['comment_text'].apply(clean_comment)
     return df
 

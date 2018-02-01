@@ -48,26 +48,20 @@ def make_callback_list(model_name, save_weights=True, patience=5):
         checkpoints.append(checkpoint)
     return checkpoints
 
-def continue_training_DNN(model_name, *args, **kwargs):
+def continue_training_DNN(model_name, fit_args, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(**kwargs)
     model.model.load_weights(best_weights_path)
-    logger = CSVLogger('../logs/{}_more.csv'.format(model_name), separator=',', append=True)
-    best_weights_path="{}_more_best.hdf5".format(model_name)
-    early = EarlyStopping(monitor="val_loss", mode="min", patience=10)
-    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    callbacks_list = [logger, checkpoint, early] #early
+    callbacks_list = make_callback_list(model_name+'_more', patience=5)
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
     return model
 
-def continue_training_DNN_one_output(model_name, i, weights, *args, **kwargs):
+def continue_training_DNN_one_output(model_name, i, weights, fit_args, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(**kwargs)
     transfer_weights_multi_to_one(weights, model.model, i)
-    logger = CSVLogger('../logs/{}.csv'.format(model_name), separator=',', append=False)
-    checkpoint = ModelCheckpoint(best_weights_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    callbacks_list = [logger, checkpoint, early] #early
+    callbacks_list = make_callback_list(model_name, patience=5)
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
     model.model.load_weights(best_weights_path)
@@ -80,6 +74,10 @@ def predict_for_one_category(model_name, model):
 def predict_for_all(model):
     test_text, _ = pre.load_data('test.csv')
     predictions = model.predict(test_text)
+    hlp.write_model(predictions)
+
+def conc_finetuned_preds(model_name):
+    predictions = np.concatenate([joblib.load('{}_{}.pkl'.format(model_name,i))[:,None] for i in xrange(6)], axis=1)
     hlp.write_model(predictions)
 
 def fit_model(model_name, fit_args, *args, **kwargs):
@@ -112,34 +110,11 @@ def transfer_weights_multi_to_one(weights, model, i):
     # now for the last layer
     model.layers[-1].set_weights([weights[-1][0][:,i][:,None], weights[-1][1][i][None]])
 
-def fine_tune_model(model_name, old_model, train_X, train_y, **kwargs):
+def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, **kwargs):
     '''Fits and returns a model for one label (provided as index i)'''
     weights = [layer.get_weights() for layer in old_model.layers]
     for i in xrange(6):
         new_name = model_name + '_{}'.format(i)
-        predict_for_one_category(new_name,
-                continue_training_DNN_one_output(new_name, i, weights, train_X, train_y[:,i], **kwargs))
+        model = continue_training_DNN_one_output(new_name, i, weights, fit_args, train_X, train_y[:,i], **kwargs)
+        joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
 
-if __name__=='__main__':
-    model_func = partial(models.RNN_general, rnn_func=keras.layers.CuDNNLSTM, no_rnn_layers=1)
-    aux_task = train_y.sum(axis=1) > 0
-    class_weights = hlp.get_class_weights(train_y)
-    weight_tensor = tf.convert_to_tensor(class_weights, dtype=tf.float32)
-    loss = partial(models.weighted_binary_crossentropy, weights=weight_tensor)
-    loss.__name__ = 'weighted_binary_crossentropy'
-    model_params = {
-        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 300,
-        'embedding_dim' : 300, 'trainable' : False,
-        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
-
-    frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
-    frozen_tokenizer.fit(pd.concat([train_text, test_text]))
-    model_name = '300_fasttext_cuda_just_that_LSTM'
-    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
-#    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-    model = fit_model(model_name, {'main_input':train_text}, {'main_output':train_y}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-    hlp.write_model(model.predict(test_text))
-#    K.clear_session()
-#    model_params['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0005, beta_2=0.99)
-#    model = continue_training_DNN(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-#    hlp.write_model(model.predict(test_text))

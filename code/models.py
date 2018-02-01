@@ -4,6 +4,7 @@ from __future__ import division
 import numpy as np
 import pandas as pd
 import joblib
+from attlayer import AttentionWeightedAverage
 import pandas as pd, numpy as np
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.model_selection import cross_val_score
@@ -24,6 +25,7 @@ from keras.models import Model
 from keras.layers import Dense, Embedding, Input
 from keras import optimizers
 from keras.layers import LSTM, Bidirectional, GlobalMaxPool1D, Dropout, BatchNormalization, MaxPooling1D
+from keras.layers.merge import concatenate
 from keras.layers import CuDNNLSTM, CuDNNGRU, GRU
 from keras.preprocessing import text, sequence
 from keras.callbacks import EarlyStopping, ModelCheckpoint
@@ -362,6 +364,29 @@ def LSTM_twice_dropout_model(x):
     x = Dense(6, activation="sigmoid")(x)
     return x
 
+#WORK IN PROGRESS!!!
+def RNN_aux_loss_skip(x, no_rnn_layers=2, hidden_rnn=64, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1):
+    if rnn_func is None:
+        rnn_func = CuDNNGRU
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    act_list = [x]
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
+        act_list.append(x)
+    conc_act = concatenate(conc_act)
+    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(conc_act)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(dropout)(x)
+    x = Dense(hidden_dense, activation='relu')(x)
+    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return [x, aux_dense], None
+
+
 def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1):
     if rnn_func is None:
         rnn_func = LSTM
@@ -380,6 +405,49 @@ def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=No
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
+def RNN_general_att(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    vals = [x]
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        val.append(x)
+    conc = concatenate(vals)
+    x = AttentionWeightedAverage(name='attlayer')(conc)
+#    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+def RNN_general_skip(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    vals = [x]
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    conc = concatenate(vals)
+    x = GlobalMaxPool1D()(conc)
+    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+
 def RNN_general(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
@@ -397,6 +465,27 @@ def RNN_general(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=Non
     x = Dropout(dropout)(x)
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return x, None
+
+def RNN_general_one_class(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout)(x)
+    x = Dense(1, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+def CNN_shallow():
+    pass
 
 def LSTM_CUDA_dropout_model(x):
     x = Bidirectional(CuDNNLSTM(64, return_sequences=True, dropout=0.5))(x)
