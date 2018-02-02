@@ -52,7 +52,7 @@ def continue_training_DNN(model_name, fit_args, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(**kwargs)
     model.model.load_weights(best_weights_path)
-    callbacks_list = make_callback_list(model_name+'_more', patience=5)
+    callbacks_list = make_callback_list(model_name+'_more', patience=3)
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
     return model
@@ -110,11 +110,12 @@ def transfer_weights_multi_to_one(weights, model, i):
     # now for the last layer
     model.layers[-1].set_weights([weights[-1][0][:,i][:,None], weights[-1][1][i][None]])
 
-def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, **kwargs):
+def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, test_text, **kwargs):
     '''Fits and returns a model for one label (provided as index i)'''
     weights = [layer.get_weights() for layer in old_model.layers]
-    for i in xrange(6):
+    for i in xrange(4, 6):
         new_name = model_name + '_{}'.format(i)
         model = continue_training_DNN_one_output(new_name, i, weights, fit_args, train_X, train_y[:,i], **kwargs)
         joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
+        K.clear_session()
 

@@ -56,16 +56,14 @@ def data_preprocessing(df):
     df['comment_text'] = df['comment_text'].apply(clean_comment)
     return df
 
-def load_data(name='train.csv', preprocess=True):
+def load_data(name='train.csv', preprocess=True, cut=True):
     data = pd.read_csv('../input/{}'.format(name), encoding='utf-8')
     if preprocess:
         data = data_preprocessing(data)
-#    if language:
-#        languages = pd.read_csv('language_{}'.format(name), header=None).squeeze()
-#        grouped_data = data.groupby(by=lambda x : languages[x])
-#        data_dict = { language : [data['comment_text'], data.iloc[:, 2:].values]
-#                      for language, data in grouped_data }
-#    else:
+    if cut:
+        # these comments are often (or always) mis-labeled
+        not_toxic_but_nz = np.logical_and(train_y[:,0]==0, np.logical_not(all_zero))
+        data = data.drop(data.index[np.where(not_toxic_but_nz)[0]])
     text = data['comment_text']
     labels = data.iloc[:, 2:].values
 #        data_dict = {'babel' : [text, labels]}

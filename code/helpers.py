@@ -92,6 +92,17 @@ def predictions_for_language(language_dict, test_data=None):
         predictions[languages_test==language, :] = language_dict[language].predict_proba(language_data)
     return predictions
 
+@memory.cache
+def get_fasttext_rank(fasttext_path):
+    rank_idx = {}
+    with open(fasttext_path, 'r') as f:
+        for nr, line in enumerate(f):
+            values = line.split()
+            word = values[0]
+            rank_index[word] = nr
+    return rank_idx
+
+
 def dump_trials(trials, fname=''):
     import time
     joblib.dump(trials, '../validation_logs/trial_{}_{}.json'.format(fname, time.strftime("%m%d-%H%M")))
