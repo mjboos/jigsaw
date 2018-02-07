@@ -37,7 +37,7 @@ def train_DNN(model_name, fit_args, *args, **kwargs):
     model.model.load_weights(best_weights_path)
     return model
 
-def make_callback_list(model_name, save_weights=True, patience=5):
+def make_callback_list(model_name, save_weights=True, patience=10):
     '''Makes and returns a callback list for logging, saving the best model, and early stopping with patience=patience'''
     best_weights_path="{}_best.hdf5".format(model_name)
     early = EarlyStopping(monitor="val_loss", mode="min", patience=patience)
@@ -55,6 +55,24 @@ def continue_training_DNN(model_name, fit_args, *args, **kwargs):
     callbacks_list = make_callback_list(model_name+'_more', patience=3)
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
+    model.model.load_weights(best_weights_path)
+    return model
+
+def freeze_layers(model, unfrozen_types=[], unfrozen_keyword=None):
+    """ Freezes all layers in the given model, except for ones that are
+        explicitly specified to not be frozen.
+    # Arguments:
+        model: Model whose layers should be modified.
+        unfrozen_types: List of layer types which shouldn't be frozen.
+        unfrozen_keyword: Name keywords of layers that shouldn't be frozen.
+    # Returns:
+        Model with the selected layers frozen.
+    """
+    for l in model.layers:
+        if len(l.trainable_weights):
+            trainable = (type(l) in unfrozen_types or
+                         (unfrozen_keyword is not None and unfrozen_keyword in l.name))
+            change_trainable(l, trainable, verbose=False)
     return model
 
 def continue_training_DNN_one_output(model_name, i, weights, fit_args, *args, **kwargs):
@@ -62,6 +80,7 @@ def continue_training_DNN_one_output(model_name, i, weights, fit_args, *args, **
     model = models.Embedding_Blanko_DNN(**kwargs)
     transfer_weights_multi_to_one(weights, model.model, i)
     callbacks_list = make_callback_list(model_name, patience=5)
+    model.model = freeze_layers(model.model, unfrozen_keyword='main_output')
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
     model.model.load_weights(best_weights_path)
@@ -77,7 +96,7 @@ def predict_for_all(model):
     hlp.write_model(predictions)
 
 def conc_finetuned_preds(model_name):
-    predictions = np.concatenate([joblib.load('{}_{}.pkl'.format(model_name,i))[:,None] for i in xrange(6)], axis=1)
+    predictions = np.concatenate([joblib.load('{}_{}.pkl'.format(model_name,i)) for i in xrange(6)], axis=1)
     hlp.write_model(predictions)
 
 def fit_model(model_name, fit_args, *args, **kwargs):
@@ -113,9 +132,13 @@ def transfer_weights_multi_to_one(weights, model, i):
 def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, test_text, **kwargs):
     '''Fits and returns a model for one label (provided as index i)'''
     weights = [layer.get_weights() for layer in old_model.layers]
-    for i in xrange(4, 6):
+    if 'compilation_args' in kwargs:
+        kwargs['compilation_args']['optimizers'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
+    for i in xrange(6):
         new_name = model_name + '_{}'.format(i)
         model = continue_training_DNN_one_output(new_name, i, weights, fit_args, train_X, train_y[:,i], **kwargs)
         joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
         K.clear_session()
+        if 'compilation_args' in kwargs:
+            kwargs['compilation_args']['optimizers'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
 

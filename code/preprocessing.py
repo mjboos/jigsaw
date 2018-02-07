@@ -11,7 +11,7 @@ from keras.preprocessing import text, sequence
 from nltk.corpus import stopwords
 import re, string
 from sklearn.base import BaseEstimator, TransformerMixin
-
+import feature_engineering
 import string
 eng_stopwords = set(stopwords.words("english"))
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
@@ -44,27 +44,38 @@ def clean_comment(text):
     text = ud.normalize('NFD', text.encode('utf-8').decode('utf-8'))
     text = re.sub(r'[^\x00-\x7f]', r' ' , text)
     text = re.sub(r'[\n\r]', r' ', text)
+    s = re.sub(r"what's", "what is ", text, flags=re.IGNORECASE)
+    s = re.sub(r"\'s", " ", s, flags=re.IGNORECASE)
+    s = re.sub(r"\'ve", " have ", s, flags=re.IGNORECASE)
+    s = re.sub(r"can't", "cannot ", s, flags=re.IGNORECASE)
+    s = re.sub(r"n't", " not ", s, flags=re.IGNORECASE)
+    s = re.sub(r"i'm", "i am ", s, flags=re.IGNORECASE)
+    s = re.sub(r"\'re", " are ", s, flags=re.IGNORECASE)
+    s = re.sub(r"\'d", " would ", s, flags=re.IGNORECASE)
+    s = re.sub(r"\'ll", " will ", s, flags=re.IGNORECASE)
+    s = re.sub(r"\'scuse", " excuse ", s, flags=re.IGNORECASE)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
     # add space between punctuation
-    s = re.sub(r'([.,!?():;_^`<=>$%&@|{}\-+#~*\/"])', r' \1 ', text)
+    s = re.sub(r'([.,!?():;_^`<=>$%&@|{}\-+\[\]#~*\/"])', r' \1 ', s)
+    s = re.sub(r"(['])", r' \1 ', s)
     s = re.sub('\s{2,}', ' ', s)
     return s.encode('utf-8')
 
 @memory.cache
 def data_preprocessing(df):
-    df['comment_text'].fillna('  ', inplace=True)
+    df['comment_text'].fillna(' ', inplace=True)
     df['comment_text'] = df['comment_text'].apply(clean_comment)
     return df
 
-def load_data(name='train.csv', preprocess=True, cut=True):
+def load_data(name='train.csv', preprocess=True, cut=False):
     data = pd.read_csv('../input/{}'.format(name), encoding='utf-8')
     if preprocess:
         data = data_preprocessing(data)
-    if cut:
+    if cut and name=='train.csv':
         # these comments are often (or always) mis-labeled
-        not_toxic_but_nz = np.logical_and(train_y[:,0]==0, np.logical_not(all_zero))
+        not_toxic_but_nz = np.logical_and(data.iloc[:,2].values==0, data.iloc[:,2:].values.any(axis=1))
         data = data.drop(data.index[np.where(not_toxic_but_nz)[0]])
-    text = data['comment_text']
+    text = data['comment_text'].reset_index(drop=True)
     labels = data.iloc[:, 2:].values
 #        data_dict = {'babel' : [text, labels]}
     return text, labels
@@ -76,7 +87,7 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
     def __init__(self, max_features=20000, maxlen=200,
-            filters='\t\n', **kwargs):
+            filters="\t\n", **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
         self.is_trained = False
@@ -89,3 +100,7 @@ class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
 
     def transform(self, list_of_sentences):
         return sequence.pad_sequences(self.tokenizer.texts_to_sequences(list_of_sentences), maxlen=self.maxlen)
+
+def pad_and_extract_capitals(df, maxlen=500):
+    train_data_augmentation = df.apply(feature_engineering.caps_vec)
+    return sequence.pad_sequences([caps for caps in train_data_augmentation], maxlen=maxlen)
