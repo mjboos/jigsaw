@@ -13,6 +13,9 @@ import re, string
 from sklearn.base import BaseEstimator, TransformerMixin
 import feature_engineering
 import string
+import json
+from functools import partial
+
 eng_stopwords = set(stopwords.words("english"))
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
@@ -36,12 +39,28 @@ control_chars = ''.join(map(unichr, range(0,32) + range(127,160)))
 
 control_char_re = re.compile('[%s]' % re.escape(control_chars))
 
+#with open('bad_words_translation.json', 'r') as fl:
+#    bad_word_dict = json.load(fl)
+bad_word_dict = joblib.load('bad_words_misspellings.pkl')
+some_bad_words = joblib.load('some_bad_words.pkl')
+
+def check_for_duplicates(word, zero_words):
+    regex = r'^' + ''.join('[{}]+'.format(c) for c in word) + '$'
+    matches = [re.search(regex, s) for s in zero_words]
+    is_match = np.array([m is not None for m in matches])
+    return is_match, np.where(is_match)[0]
+
+def replacement_regex(word):
+    regex = r'\b' + ''.join('[{}]+'.format(c) for c in word) + r'\b'
+    return regex
+
 def remove_control_chars(s):
     return control_char_re.sub('', s)
 
-def clean_comment(text):
+def clean_comment(text, replace_misspellings=False):
     import unicodedata as ud
     text = ud.normalize('NFD', text.encode('utf-8').decode('utf-8'))
+    text = text.lower()
     text = re.sub(r'[^\x00-\x7f]', r' ' , text)
     text = re.sub(r'[\n\r]', r' ', text)
     s = re.sub(r"what's", "what is ", text, flags=re.IGNORECASE)
@@ -54,23 +73,47 @@ def clean_comment(text):
     s = re.sub(r"\'d", " would ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'ll", " will ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'scuse", " excuse ", s, flags=re.IGNORECASE)
+    s = re.sub(r'([_])', r' \1 ', s)
+    s = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', ' _ip_ ', s)
+    s = re.sub(r'\b[a-z]+\d+\b', ' _user_ ', s)
+    s = re.sub(r'\b[0-9]+\b', ' _number_ ', s)
+
+    #hard coded replacements
+    for bad_word in some_bad_words:
+        s = re.sub(replacement_regex(bad_word), ' ' + bad_word + ' ', s)
+    s = re.sub(r'\bfukc\b', ' fuck ', s)
+    s = re.sub(r'\bfcuk\b', ' fuck ', s)
+    s = re.sub(r'\bfucc\b', ' fuck ', s)
+    s = re.sub(r'\bfukk\b', ' fuck ', s)
+    s = re.sub(r'\bfukker\b', ' fuck ', s)
+    s = re.sub(r'\bfucka\b', ' fucker ', s)
+
+    #wikipedia specific features
+    s = re.sub(r'(?<=\(talk\)).*?(?=$)', ' _date_ ', s)
+    s = re.sub(r'\b\(talk\)', ' _wikipedia_ ', s)
+    s = re.sub(ur'(?:https?://|www\.)(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', ' _url_ ', s)
+    s = re.sub(ur'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', ' _mail_ ', s)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
     # add space between punctuation
-    s = re.sub(r'([.,!?():;_^`<=>$%&@|{}\-+\[\]#~*\/"])', r' \1 ', s)
+    s = re.sub(r'([.,!?():;^`<=>$%&@|{}\-+\[\]#~*\/"])', r' \1 ', s)
     s = re.sub(r"(['])", r' \1 ', s)
     s = re.sub('\s{2,}', ' ', s)
+    if replace_misspellings:
+        for key, val in bad_word_dict.iteritems():
+            s = re.sub(r'\b{}\b'.format(key.lower()), ' '+val.lower()+' ', s)
     return s.encode('utf-8')
 
 @memory.cache
-def data_preprocessing(df):
+def data_preprocessing(df, replace_misspellings=False):
     df['comment_text'].fillna(' ', inplace=True)
-    df['comment_text'] = df['comment_text'].apply(clean_comment)
+    clean_comment_dummy = partial(clean_comment, replace_misspellings=replace_misspellings)
+    df['comment_text'] = df['comment_text'].apply(clean_comment_dummy)
     return df
 
-def load_data(name='train.csv', preprocess=True, cut=False):
+def load_data(name='train.csv', preprocess=True, cut=False, replace_misspellings=False):
     data = pd.read_csv('../input/{}'.format(name), encoding='utf-8')
     if preprocess:
-        data = data_preprocessing(data)
+        data = data_preprocessing(data, replace_misspellings=replace_misspellings)
     if cut and name=='train.csv':
         # these comments are often (or always) mis-labeled
         not_toxic_but_nz = np.logical_and(data.iloc[:,2].values==0, data.iloc[:,2:].values.any(axis=1))

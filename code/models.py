@@ -169,25 +169,32 @@ def prune_zero_vectors(matrix):
     matrix = matrix[np.array([True] + [vec.any() for vec in matrix[1:-1]] + [True])]
     return matrix
 
-def which_words_are_zero_vectors(embedding_matrix, word_index, oov_token):
+def which_words_are_zero_vectors(embedding_matrix, word_index, oov_token, exclude_ids=False):
     '''Returns a list of words which are zero vectors (not found) in the embedding matrix'''
     word_list = []
+    DEBUG_cnt = 0
     for word, i in word_index.items():
         if word == oov_token:
             continue
+        if exclude_ids:
+            if word.startswith('_') and word.endswith('_'):
+                DEBUG_cnt += 1
+                continue
         if i >= embedding_matrix.shape[0]:
             # word is out of max features
             word_list.append(word)
         elif not embedding_matrix[i].any():
             # word is a zero vector
             word_list.append(word)
+    print DEBUG_cnt
     return word_list
 
 #TODO: more flexible spelling correction
-def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200, embedding_dim=50, correct_spelling=None, diagnostics=False, **kwargs):
+def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200, embedding_dim=50, meta_features=True, **kwargs):
     num_words = min(max_features, len(word_index))
-    # add one element for zero vector, else initialize randomly
+    # add one element for zero vector
     embedding_matrix = np.zeros((num_words+1, embedding_dim))
+
     for word, i in word_index.items():
         if i >= max_features:
             continue
@@ -195,21 +202,10 @@ def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200,
         if embedding_vector is not None:
             # words not found in embedding index will be all-zeros.
             embedding_matrix[i] = embedding_vector
-        else:
-            if correct_spelling:
-                # replace with autocorrected word IF this word is in embeddings
-                suggested_word = correct_spelling(word)
-                embedding_vector = embedding.get(suggested_word)
-                if embedding_vector is not None:
-                    embedding_matrix[i] = embedding_vector
-
-    # check which words are not recognized
-    if diagnostics:
-        word_list = which_words_are_zero_vectors(embedding_matrix, word_index)
-        print('WORDs not found: {}'.format(len(word_list)))
-        print('################################')
-        with open('../notfound.txt', 'w+') as fl:
-            json.dump(word_list, fl)
+        # add random activations for meta features
+        elif meta_features:
+            if word.startswith('_') and word.endswith('_'):
+                embedding_matrix[i] = np.random.uniform(-1, 1, size=(embedding_dim,))
 
     return embedding_matrix
 
@@ -308,6 +304,8 @@ class Embedding_Blanko_DNN(BaseEstimator):
     def predict(self, X):
         if isinstance(X, dict):
             X['main_input'] = self.tokenizer.transform(X['main_input'])
+        else:
+            X = self.tokenizer.transform(X)
         return self.model.predict(X)
 
 def weighted_binary_crossentropy(y_true, y_pred, weights):

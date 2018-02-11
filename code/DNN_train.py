@@ -35,7 +35,7 @@ lr = LearningRateScheduler(schedule)
 
 
 callbacks_list = [checkpoint, early] #early
-fit_args = {'batch_size' : 100, 'epochs' : 30,
+fit_args = {'batch_size' : 80, 'epochs' : 30,
                   'validation_split' : 0.2, 'callbacks' : callbacks_list}
 
 train_text, train_y = pre.load_data()
@@ -132,7 +132,7 @@ if __name__=='__main__':
     loss = partial(models.weighted_binary_crossentropy, weights=weight_tensor)
     loss.__name__ = 'weighted_binary_crossentropy'
     model_params = simple_attention()
-    model_name = '300_fasttext_attention_GRU'
+    model_name = '300_fasttext_attention_diffpre2_GRU'
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
@@ -142,14 +142,14 @@ if __name__=='__main__':
 #    np.random.shuffle(row_idx)
 #    train_text, train_y, aux_task, train_data_augmentation = train_text[row_idx], train_y[row_idx], aux_task[row_idx], train_data_augmentation[row_idx]
 #    model = load_keras_model(model_name)
-    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-#    model = fit_model(model_name, fit_args, {'main_input':train_text, 'aug_input':train_data_augmentation}, {'main_output':aux_task}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-#    hlp.write_model(model.predict({'main_input':test_text,'aug_input':test_data_augmentation}))
-#    hlp.make_training_set_preds(model, {'main_input':train_text, 'aug_input':train_data_augmentation}, train_y)
+#    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
+    model = fit_model(model_name, fit_args, {'main_input':train_text, 'aug_input':train_data_augmentation}, {'main_output': train_y}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
+    hlp.write_model(model.predict({'main_input':test_text,'aug_input':test_data_augmentation}))
+    hlp.make_training_set_preds(model, {'main_input':train_text, 'aug_input':train_data_augmentation}, train_y)
 #    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output':train_y, 'aux_output':aux_task}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    model = continue_training_DNN(model_name, fit_args, train_text, train_y, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    hlp.write_model(model.predict(test_text))
 #    K.clear_session()
 #    model = continue_training_DNN(model_name, fit_args, train_text, train_y, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-    model_params = simple_attention_1d()
-    fine_tune_model(model_name, model.model, fit_args, train_text, train_y, test_text, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
+#    model_params = simple_attention_1d()
+#    extend_and_finetune_last_layer_model(model_name, fit_args, train_text, train_y, test_text, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)

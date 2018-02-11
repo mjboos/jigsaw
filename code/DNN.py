@@ -17,6 +17,7 @@ import helpers as hlp
 import models
 import preprocessing as pre
 from keras import optimizers
+from keras.layers import Bidirectional, TimeDistributed
 from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateScheduler, CSVLogger
 import json
 import feature_engineering
@@ -48,11 +49,23 @@ def make_callback_list(model_name, save_weights=True, patience=10):
         checkpoints.append(checkpoint)
     return checkpoints
 
+def continue_training_DNN_last_layer(model_name, old_model_name, fit_args, *args, **kwargs):
+    best_weights_path="{}_best.hdf5".format(model_name)
+    old_weights_path="{}_best.hdf5".format(old_model_name)
+    model = models.Embedding_Blanko_DNN(**kwargs)
+    model.model.load_weights(old_weights_path)
+    model.model = freeze_layers(model.model, unfrozen_keyword='main_output')
+    callbacks_list = make_callback_list(best_weights_path, patience=5)
+    fit_args['callbacks'] = callbacks_list
+    model.fit(*args, **fit_args)
+    model.model.load_weights(best_weights_path)
+    return model
+
 def continue_training_DNN(model_name, fit_args, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(**kwargs)
     model.model.load_weights(best_weights_path)
-    callbacks_list = make_callback_list(model_name+'_more', patience=3)
+    callbacks_list = make_callback_list(model_name+'_more', patience=5)
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
     model.model.load_weights(best_weights_path)
@@ -129,16 +142,50 @@ def transfer_weights_multi_to_one(weights, model, i):
     # now for the last layer
     model.layers[-1].set_weights([weights[-1][0][:,i][:,None], weights[-1][1][i][None]])
 
+def change_trainable(layer, trainable, verbose=False):
+    """ Helper method that fixes some of Keras' issues with wrappers and
+        trainability. Freezes or unfreezes a given layer.
+    # Arguments:
+        layer: Layer to be modified.
+        trainable: Whether the layer should be frozen or unfrozen.
+        verbose: Verbosity flag.
+    """
+
+    layer.trainable = trainable
+
+    if type(layer) == Bidirectional:
+        layer.backward_layer.trainable = trainable
+        layer.forward_layer.trainable = trainable
+
+    if type(layer) == TimeDistributed:
+        layer.backward_layer.trainable = trainable
+
+    if verbose:
+        action = 'Unfroze' if trainable else 'Froze'
+        print("{} {}".format(action, layer.name))
+
+def extend_and_finetune_last_layer_model(model_name, fit_args, train_X, train_y, test_text, **kwargs):
+    '''Fits and returns a model for one label (provided as index i)'''
+    if 'compilation_args' in kwargs:
+        kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
+    for i in xrange(6):
+        new_name = model_name + '_{}'.format(i)
+        model = continue_training_DNN_last_layer(new_name, model_name, fit_args, train_X, train_y[:,i], **kwargs)
+        joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
+        K.clear_session()
+        if 'compilation_args' in kwargs:
+            kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
+
 def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, test_text, **kwargs):
     '''Fits and returns a model for one label (provided as index i)'''
     weights = [layer.get_weights() for layer in old_model.layers]
     if 'compilation_args' in kwargs:
-        kwargs['compilation_args']['optimizers'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
+        kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
     for i in xrange(6):
         new_name = model_name + '_{}'.format(i)
         model = continue_training_DNN_one_output(new_name, i, weights, fit_args, train_X, train_y[:,i], **kwargs)
         joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
         K.clear_session()
         if 'compilation_args' in kwargs:
-            kwargs['compilation_args']['optimizers'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
+            kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
 
