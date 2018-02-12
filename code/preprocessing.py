@@ -89,8 +89,13 @@ def clean_comment(text, replace_misspellings=False):
     s = re.sub(r'\bfucka\b', ' fucker ', s)
 
     #wikipedia specific features
-    s = re.sub(r'(?<=\(talk\)).*?(?=$)', ' _date_ ', s)
-    s = re.sub(r'\b\(talk\)', ' _wikipedia_ ', s)
+#    wikipedia_regex = [r'\(talk\)', r'\(utc\)', r'\(talk|email\)']
+#    wikipedia_matches = [re.search(regex, s) for regex in wikipedia_regex]
+    s = re.sub(r'(?<=\(talk\)).*?(?=\(utc\))', ' _date_ ', s)
+    s = re.sub(r'\(talk\)', ' _wikipedia_ ', s)
+    s = re.sub(r'\(utc\)', ' _wikipedia_ ', s)
+    s = re.sub(r'\(talk|email\)', ' _wikipedia_ ', s)
+
     s = re.sub(ur'(?:https?://|www\.)(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', ' _url_ ', s)
     s = re.sub(ur'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', ' _mail_ ', s)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
@@ -130,7 +135,7 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
     def __init__(self, max_features=20000, maxlen=200,
-            filters="\t\n", **kwargs):
+            filters="\t\n{}&%$§^°[]<>|@[]+`' ", **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
         self.is_trained = False

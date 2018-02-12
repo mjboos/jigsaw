@@ -209,12 +209,15 @@ def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200,
 
     return embedding_matrix
 
-def make_embedding_layer(embedding_matrix, maxlen=200, trainable=False, **kwargs):
+def make_embedding_layer(embedding_matrix, maxlen=200, l2=1e-6, trainable=False, **kwargs):
     # load pre-trained word embeddings into an Embedding layer
     # note that we set trainable = False so as to keep the embeddings fixed
+    from keras.regularizers import L1L2
+    embed_reg = L1L2(l2=l2) if l2 != 0 and trainable else None
     embedding_layer = Embedding(embedding_matrix.shape[0],
                                 embedding_matrix.shape[1],
                                 weights=[embedding_matrix],
+                                embeddings_regularizer=embed_reg,
                                 input_length=maxlen,
                                 trainable=trainable)
     return embedding_layer
@@ -483,14 +486,17 @@ def RNN_attention_1d(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fun
     x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500):
+def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
         hidden_rnn = [hidden_rnn] * no_rnn_layers
     if len(hidden_rnn) != no_rnn_layers:
         raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
-    vals = []
+    if train_embedding:
+        vals = [x]
+    else:
+        vals = []
     for rnn_size in hidden_rnn:
         x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)

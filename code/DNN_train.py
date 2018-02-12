@@ -90,7 +90,7 @@ def simple_attention_1d(trainable=False, prune=True):
     return model_params
 
 def simple_attention(trainable=False, prune=True):
-    model_func = partial(models.RNN_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5)
+    model_func = partial(models.RNN_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
@@ -131,8 +131,8 @@ if __name__=='__main__':
     weight_tensor = tf.convert_to_tensor(class_weights, dtype=tf.float32)
     loss = partial(models.weighted_binary_crossentropy, weights=weight_tensor)
     loss.__name__ = 'weighted_binary_crossentropy'
-    model_params = simple_attention()
-    model_name = '300_fasttext_attention_diffpre2_GRU'
+    model_params = simple_attention(trainable=False)
+    model_name = '300_fasttext_attention_diffpre3_GRU'
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
