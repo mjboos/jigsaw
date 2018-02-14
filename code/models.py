@@ -20,11 +20,12 @@ from sklearn.linear_model import LogisticRegression
 from keras.utils import to_categorical
 from keras.layers import Dense, Input, GlobalMaxPooling1D
 import tensorflow as tf
-from keras.layers import Conv1D, MaxPooling1D, Embedding, Reshape, Activation
+from keras import backend
+from keras.layers import Conv1D, MaxPooling1D, Embedding, Reshape, Activation, Lambda
 from keras.models import Model
 from keras.layers import Dense, Embedding, Input
 from keras import optimizers
-from keras.layers import LSTM, Bidirectional, GlobalMaxPool1D, Dropout, BatchNormalization, MaxPooling1D
+from keras.layers import LSTM, Bidirectional, GlobalMaxPool1D, Dropout, BatchNormalization, MaxPooling1D, GlobalAveragePooling1D
 from keras.layers.merge import concatenate
 from keras.layers import CuDNNLSTM, CuDNNGRU, GRU
 from keras.preprocessing import text, sequence
@@ -222,6 +223,37 @@ def make_embedding_layer(embedding_matrix, maxlen=200, l2=1e-6, trainable=False,
                                 trainable=trainable)
     return embedding_layer
 
+def reduce_embedding_matrix_in_size(embedding_matrix, eliminate=30, **kwargs):
+    embedding_matrix = embedding_matrix.copy()
+    embedding_matrix[1:-1] = embedding_matrix[1:-1] - embedding_matrix[1:-1].mean(axis=0)
+    pca = PCA(svd_solver='randomized', whiten=True, **kwargs)
+    embedding2 = pca.fit_transform(embedding_matrix[1:-1])
+    embedding_matrix[1:-1, :embedding2.shape[1]] = embedding2
+    embedding_matrix = embedding_matrix[:,: embedding2.shape[1]]
+
+def reduce_embedding_size(X_train):
+    X_train = X_train.copy()
+    pca =  PCA(n_components = 300)
+    X_train = X_train - np.mean(X_train)
+    X_fit = pca.fit_transform(X_train)
+    U1 = pca.components_
+
+    pca_embeddings = {}
+    z = []
+
+    # Removing Projections on Top Components
+    for i, x in enumerate(X_train):
+        for u in U1[0:7]:
+            x = x - np.dot(u.transpose(),x) * u
+        z.append(x)
+    z = np.asarray(z).astype(np.float32)    
+
+    # PCA for Dim Reduction
+    pca =  PCA(n_components = 150)
+    X_train = z - np.mean(z)
+    X_new = pca.fit_transform(X_train)
+    return X_new
+
 def add_oov_vector_and_prune(embedding_matrix, tokenizer):
     embedding_matrix = np.vstack([embedding_matrix, np.zeros((1, embedding_matrix.shape[1]))])
     return prune_matrix_and_tokenizer(embedding_matrix, tokenizer)
@@ -231,17 +263,18 @@ def make_model_function(**kwargs):
 
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,
-            maxlen=300, embedding_dim=300, correct_spelling=False, trainable=False, prune=True,
+            maxlen=300, embedding_dim=300, halfprec=False, trainable=False, prune=True,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
         self.max_features = max_features
         self.trainable = trainable
         self.maxlen = maxlen
         self.embedding_dim = embedding_dim
-        self.correct_spelling = correct_spelling
         # test for embedding
         self.prune = prune
         self.embedding_args = embedding_args
+        self.halfprec = halfprec
+
         if tokenizer:
             self.tokenizer = copy.deepcopy(tokenizer)
             if tokenizer.is_trained:
@@ -264,7 +297,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
 
         if self.tokenizer.is_trained:
             word_index = self.tokenizer.tokenizer.word_index
-            embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+            embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim)
             if self.prune:
                 embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen,
@@ -283,11 +316,14 @@ class Embedding_Blanko_DNN(BaseEstimator):
         if not self.tokenizer.is_trained:
             self.tokenizer.fit(X)
             word_index = self.tokenizer.tokenizer.word_index
-            embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim, correct_spelling=self.correct_spelling)
+            embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim)
             if self.prune:
                 embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
+            if self.halfprec:
+                embedding_matrix = embedding_matrix.astype('float16')
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable,  preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
+
             embedded_sequences = embedding_layer(sequence_input)
             outputs, aux_input = self.model_function(embedded_sequences)
             if aux_input:
@@ -486,6 +522,119 @@ def RNN_attention_1d(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fun
     x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
 
+def RNN_diff_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    if train_embedding:
+        vals = [x]
+    else:
+        vals = []
+
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    if len(vals) > 1:
+        vals = concatenate(vals)
+    else:
+        vals = vals[0]
+    att = AttentionWeightedAverage(name='attlayer')(vals)
+    x = concatenate([att, GlobalMaxPool1D()(x), Lambda(lambda x : x[:,-1, :])(x)])
+#    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout_dense)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    if train_embedding:
+        vals = [x]
+    else:
+        vals = []
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x, noise_shape=(None, 1, x.shape[-1]))
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    if len(vals) > 1:
+        vals = concatenate(vals)
+    else:
+        vals = vals[0]
+    x = AttentionWeightedAverage(name='attlayer')(vals)
+#    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout_dense)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+def RNN_time_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    if train_embedding:
+        vals = [x]
+    else:
+        vals = []
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x, noise_shape=(None, x.shape[1], 1))
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    if len(vals) > 1:
+        vals = concatenate(vals)
+    else:
+        vals = vals[0]
+    x = AttentionWeightedAverage(name='attlayer')(vals)
+#    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout_dense)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+
+def RNN_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    if train_embedding:
+        vals = [x]
+    else:
+        vals = []
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    if len(vals) > 1:
+        vals = concatenate(vals)
+    else:
+        vals = vals[0]
+    vals = Dropout(dropout)(vals)
+    x = AttentionWeightedAverage(name='attlayer')(vals)
+#    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout_dense)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+
 def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
@@ -501,7 +650,10 @@ def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=N
         x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
         vals.append(x)
-    vals = concatenate(vals)
+    if len(vals) > 1:
+        vals = concatenate(vals)
+    else:
+        vals = vals[0]
     x = AttentionWeightedAverage(name='attlayer')(vals)
 #    x = Dropout(dropout)(x)
 #    x = BatchNormalization(x)
@@ -579,6 +731,23 @@ def RNN_augment(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=Non
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return x, aug_input
 
+def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+    x = concatenate([GlobalAveragePooling1D()(x), GlobalMaxPool1D()(x), Lambda(lambda x : x[:,-1, :])(x)])
+    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+#    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
 
 def RNN_general(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
     if rnn_func is None:

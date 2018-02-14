@@ -92,7 +92,7 @@ def clean_comment(text, replace_misspellings=False):
 #    wikipedia_regex = [r'\(talk\)', r'\(utc\)', r'\(talk|email\)']
 #    wikipedia_matches = [re.search(regex, s) for regex in wikipedia_regex]
     s = re.sub(r'(?<=\(talk\)).*?(?=\(utc\))', ' _date_ ', s)
-    s = re.sub(r'\(talk\)', ' _wikipedia_ ', s)
+    s = re.sub(r'\(talk\)', ' _wikipedia ', s)
     s = re.sub(r'\(utc\)', ' _wikipedia_ ', s)
     s = re.sub(r'\(talk|email\)', ' _wikipedia_ ', s)
 
@@ -100,6 +100,10 @@ def clean_comment(text, replace_misspellings=False):
     s = re.sub(ur'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', ' _mail_ ', s)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
     # add space between punctuation
+
+    #shorten words
+    s = re.sub(r'(\w)\1\1+', r' \1\1 ', s)
+
     s = re.sub(r'([.,!?():;^`<=>$%&@|{}\-+\[\]#~*\/"])', r' \1 ', s)
     s = re.sub(r"(['])", r' \1 ', s)
     s = re.sub('\s{2,}', ' ', s)

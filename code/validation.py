@@ -23,23 +23,28 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateSchedule
 import feature_engineering
 import DNN
 
-def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=5):
+def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=3):
     '''Builds and evaluates a CNN on train_text, train_labels'''
     new_dict = {key:val for key, val in fixed_args.items()}
     new_dict.update(kwargs)
-    new_dict['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, beta_2=0.99)
     new_time = 'cval_{}'.format(time.strftime("%m%d-%H%M"))
-    kfold = KFold(n_splits=cv, shuffle=True)
+    kfold = KFold(n_splits=cv, shuffle=False)
     scores = []
     Xs = np.zeros((len(X),1), dtype='int8')
+    predictions = []
     for train, test in kfold.split(Xs):
+        new_dict['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
         train_x = [X[i] for i in train]
         test_x = [X[i] for i in test]
-        estimator = DNN.fit_model(new_time, fit_args, train_x, y[train], **new_dict)
-        predictions = estimator.predict(test_x)
-        scores.append(hlp.mean_log_loss(y[test], predictions))
+        model_time = '{}_{}'.format(new_time, time.strftime("%m%d-%H%M"))
+        estimator = DNN.fit_model(model_time, fit_args, train_x, y[train], **new_dict)
+        predictions.append(estimator.predict(test_x))
+        scores.append(hlp.mean_log_loss(y[test], predictions[-1]))
+        K.clear_session()
     score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
-    K.clear_session()
+    predictions = np.vstack(predictions)
+    joblib.dump(predictions, '../predictions/{}.pkl'.format(new_time), compress=3)
+    joblib.dump(score_dict, '../scores/{}.pkl'.format(new_time))
     return score_dict
 
 def do_hyper_search(space, model_function, **kwargs):
@@ -115,7 +120,7 @@ def validate_feature_model(model_name, model_function, space, fixed_params_file=
     hlp.dump_trials(trials, fname=model_name)
     return best
 
-if __name__=='__main__':
+def do_hyperparameter_search():
     DNN_search_space = {'model_function' : {'no_rnn_layers' : hp.choice('no_rnn_layers', [2]),
             'rnn_func' : hp.choice('rnn_func', [models.CuDNNLSTM, models.CuDNNGRU]),
             'hidden_rnn' : hp.quniform('hidden_rnn', 32, 96, 16),
@@ -125,3 +130,28 @@ if __name__=='__main__':
     for model_name, (func, space) in token_models_to_test.iteritems():
         best = hyperopt_token_model(model_name, func, space)
         joblib.dump(best, 'best_{}.pkl'.format(model_name))
+
+def test_models():
+    fit_args = {'batch_size' : 80, 'epochs' : 30,
+                      'validation_split' : 0.2}
+    fixed_args = DNN.simple_attention_dropout()
+    kwargs = {}
+    train_text, train_y = pre.load_data()
+    test_text, _ = pre.load_data('test.csv')
+    frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=fixed_args['max_features'], maxlen=fixed_args['maxlen'])
+    frozen_tokenizer.fit(pd.concat([train_text, test_text]))
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    kwargs['embedding'] = embedding
+    kwargs['tokenizer'] = frozen_tokenizer
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
+    fixed_args = DNN.simple_attention()
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
+    fixed_args = DNN.simple_attention_channel_dropout()
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
+    fixed_args = DNN.simple_attention_word_dropout()
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
+
+
+
+if __name__=='__main__':
+    test_models()

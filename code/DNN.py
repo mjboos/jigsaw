@@ -113,7 +113,7 @@ def conc_finetuned_preds(model_name):
     hlp.write_model(predictions)
 
 def fit_model(model_name, fit_args, *args, **kwargs):
-    fit_args['callbacks'] = make_callback_list(model_name)
+    fit_args['callbacks'] = make_callback_list(model_name, patience=3)
     model = train_DNN(model_name, fit_args, *args, **kwargs)
     return model
 
@@ -188,4 +188,109 @@ def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, test_text
         K.clear_session()
         if 'compilation_args' in kwargs:
             kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
+
+def aux_net():
+    model_func = partial(models.RNN_aux_loss, rnn_func=keras.layers.CuDNNLSTM, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 300,
+        'embedding_dim' : 300, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy', 'aux_output' : 'binary_crossentropy'}, 'loss_weights' : [1., 0.1]}}
+    return model_params
+
+def simple_one_output_net():
+    model_func = partial(models.RNN_general_one_class, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99, clipvalue=1., clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def toxic_skip_net():
+    model_func = partial(models.RNN_aux_loss_skip, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=48, hidden_dense=20)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy', 'aux_output' : 'binary_crossentropy'}, 'loss_weights' : [1., 1.]}}
+    return model_params
+
+def simple_aug_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_augment, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_embedding_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_general, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_attention_1d(trainable=False, prune=True):
+    model_func = partial(models.RNN_attention_1d, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def conc_attention(trainable=False, prune=True):
+    model_func = partial(models.RNN_diff_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_attention(trainable=False, prune=True):
+    model_func = partial(models.RNN_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_attention_dropout(trainable=False, prune=True):
+    model_params = simple_attention(trainable=trainable, prune=prune)
+    model_params['model_function'] =  partial(models.RNN_dropout_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    return model_params
+
+
+def simple_attention_channel_dropout(trainable=False, prune=True):
+    model_params = simple_attention(trainable=trainable, prune=prune)
+    model_params['model_function'] =  partial(models.RNN_channel_dropout_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    return model_params
+
+def simple_attention_word_dropout(trainable=False, prune=True):
+    model_params = simple_attention(trainable=trainable, prune=prune)
+    model_params['model_function'] = partial(models.RNN_time_dropout_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    return model_params
+
+def simple_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=1, hidden_rnn=128, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def shallow_CNN(trainable=False, prune=True):
+    model_func = partial(models.CNN_shallow, n_filters=50, kernel_sizes=[3,4,5], dropout=0.5)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipvalue=1., clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def add_net():
+    model_func = partial(models.RNN_general, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 400, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99, clipvalue=1., clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
 
