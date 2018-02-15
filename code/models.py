@@ -261,9 +261,19 @@ def add_oov_vector_and_prune(embedding_matrix, tokenizer):
 def make_model_function(**kwargs):
     return partial(RNN_general, **kwargs)
 
+def data_augmentation(text_df, labels):
+    '''Accepts a dataframe consisting of comments and the corresponding labels. Augments the dataframe.'''
+    new_text = text_df.str.replace(r'([.,!?():;^`<=>$%&@|{}\-+\[\]#~*\/"])', ' ')
+    new_text = new_text.str.replace('_ip_', ' ')
+    new_text = new_text.str.replace('_user_', ' ')
+    new_text = new_text.str.replace('_number_', ' ')
+    new_text = new_text.str.replace('_url_', ' ')
+    new_text = new_text.str.strip()
+    return pd.concat([text_df, new_text], ignore_index=True), np.tile(labels, (2,1))
+
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,
-            maxlen=300, embedding_dim=300, halfprec=False, trainable=False, prune=True,
+            maxlen=300, embedding_dim=300, halfprec=False, trainable=False, prune=True, augment_data=False,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
         self.max_features = max_features
@@ -273,7 +283,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
         # test for embedding
         self.prune = prune
         self.embedding_args = embedding_args
-        self.halfprec = halfprec
+        self.augment_data = augment_data
 
         if tokenizer:
             self.tokenizer = copy.deepcopy(tokenizer)
@@ -333,10 +343,19 @@ class Embedding_Blanko_DNN(BaseEstimator):
             self.model = Model(inputs=inputs, outputs=outputs)
             self.model.compile(**self.compilation_args)
         if isinstance(X, dict):
+            if self.augment_data:
+                if isinstance(y, dict):
+                    X['main_input'], y['main_output'] = data_augmentation(X['main_input'], y['main_output'])
+                else:
+                    X['main_input'], y = data_augmentation(X['main_input'], y)
             X['main_input'] = self.tokenizer.transform(X['main_input'])
         else:
+            if self.augment_data:
+                 if isinstance(y, dict):
+                    X, y['main_output'] = data_augmentation(X, y['main_output'])
+                else:
+                    X, y = data_augmentation(X, y)
             X = self.tokenizer.transform(X)
-
         self.model.fit(X, y, **kwargs)
         return self
 
