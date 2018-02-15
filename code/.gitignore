@@ -1,0 +1,6 @@
+*.csv
+*.hdf5
+*~
+*.log
+*.txt
+*.out

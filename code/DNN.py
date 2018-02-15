@@ -17,6 +17,7 @@ import helpers as hlp
 import models
 import preprocessing as pre
 from keras import optimizers
+from keras.layers import Bidirectional, TimeDistributed
 from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateScheduler, CSVLogger
 import json
 import feature_engineering
@@ -37,7 +38,7 @@ def train_DNN(model_name, fit_args, *args, **kwargs):
     model.model.load_weights(best_weights_path)
     return model
 
-def make_callback_list(model_name, save_weights=True, patience=5):
+def make_callback_list(model_name, save_weights=True, patience=10):
     '''Makes and returns a callback list for logging, saving the best model, and early stopping with patience=patience'''
     best_weights_path="{}_best.hdf5".format(model_name)
     early = EarlyStopping(monitor="val_loss", mode="min", patience=patience)
@@ -48,6 +49,18 @@ def make_callback_list(model_name, save_weights=True, patience=5):
         checkpoints.append(checkpoint)
     return checkpoints
 
+def continue_training_DNN_last_layer(model_name, old_model_name, fit_args, *args, **kwargs):
+    best_weights_path="{}_best.hdf5".format(model_name)
+    old_weights_path="{}_best.hdf5".format(old_model_name)
+    model = models.Embedding_Blanko_DNN(**kwargs)
+    model.model.load_weights(old_weights_path)
+    model.model = freeze_layers(model.model, unfrozen_keyword='main_output')
+    callbacks_list = make_callback_list(best_weights_path, patience=5)
+    fit_args['callbacks'] = callbacks_list
+    model.fit(*args, **fit_args)
+    model.model.load_weights(best_weights_path)
+    return model
+
 def continue_training_DNN(model_name, fit_args, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(**kwargs)
@@ -55,6 +68,24 @@ def continue_training_DNN(model_name, fit_args, *args, **kwargs):
     callbacks_list = make_callback_list(model_name+'_more', patience=5)
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
+    model.model.load_weights(best_weights_path)
+    return model
+
+def freeze_layers(model, unfrozen_types=[], unfrozen_keyword=None):
+    """ Freezes all layers in the given model, except for ones that are
+        explicitly specified to not be frozen.
+    # Arguments:
+        model: Model whose layers should be modified.
+        unfrozen_types: List of layer types which shouldn't be frozen.
+        unfrozen_keyword: Name keywords of layers that shouldn't be frozen.
+    # Returns:
+        Model with the selected layers frozen.
+    """
+    for l in model.layers:
+        if len(l.trainable_weights):
+            trainable = (type(l) in unfrozen_types or
+                         (unfrozen_keyword is not None and unfrozen_keyword in l.name))
+            change_trainable(l, trainable, verbose=False)
     return model
 
 def continue_training_DNN_one_output(model_name, i, weights, fit_args, *args, **kwargs):
@@ -62,6 +93,7 @@ def continue_training_DNN_one_output(model_name, i, weights, fit_args, *args, **
     model = models.Embedding_Blanko_DNN(**kwargs)
     transfer_weights_multi_to_one(weights, model.model, i)
     callbacks_list = make_callback_list(model_name, patience=5)
+    model.model = freeze_layers(model.model, unfrozen_keyword='main_output')
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
     model.model.load_weights(best_weights_path)
@@ -77,11 +109,11 @@ def predict_for_all(model):
     hlp.write_model(predictions)
 
 def conc_finetuned_preds(model_name):
-    predictions = np.concatenate([joblib.load('{}_{}.pkl'.format(model_name,i))[:,None] for i in xrange(6)], axis=1)
+    predictions = np.concatenate([joblib.load('{}_{}.pkl'.format(model_name,i)) for i in xrange(6)], axis=1)
     hlp.write_model(predictions)
 
 def fit_model(model_name, fit_args, *args, **kwargs):
-    fit_args['callbacks'] = make_callback_list(model_name)
+    fit_args['callbacks'] = make_callback_list(model_name, patience=3)
     model = train_DNN(model_name, fit_args, *args, **kwargs)
     return model
 
@@ -110,11 +142,155 @@ def transfer_weights_multi_to_one(weights, model, i):
     # now for the last layer
     model.layers[-1].set_weights([weights[-1][0][:,i][:,None], weights[-1][1][i][None]])
 
-def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, **kwargs):
+def change_trainable(layer, trainable, verbose=False):
+    """ Helper method that fixes some of Keras' issues with wrappers and
+        trainability. Freezes or unfreezes a given layer.
+    # Arguments:
+        layer: Layer to be modified.
+        trainable: Whether the layer should be frozen or unfrozen.
+        verbose: Verbosity flag.
+    """
+
+    layer.trainable = trainable
+
+    if type(layer) == Bidirectional:
+        layer.backward_layer.trainable = trainable
+        layer.forward_layer.trainable = trainable
+
+    if type(layer) == TimeDistributed:
+        layer.backward_layer.trainable = trainable
+
+    if verbose:
+        action = 'Unfroze' if trainable else 'Froze'
+        print("{} {}".format(action, layer.name))
+
+def extend_and_finetune_last_layer_model(model_name, fit_args, train_X, train_y, test_text, **kwargs):
+    '''Fits and returns a model for one label (provided as index i)'''
+    if 'compilation_args' in kwargs:
+        kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
+    for i in xrange(6):
+        new_name = model_name + '_{}'.format(i)
+        model = continue_training_DNN_last_layer(new_name, model_name, fit_args, train_X, train_y[:,i], **kwargs)
+        joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
+        K.clear_session()
+        if 'compilation_args' in kwargs:
+            kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
+
+def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, test_text, **kwargs):
     '''Fits and returns a model for one label (provided as index i)'''
     weights = [layer.get_weights() for layer in old_model.layers]
+    if 'compilation_args' in kwargs:
+        kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
     for i in xrange(6):
         new_name = model_name + '_{}'.format(i)
         model = continue_training_DNN_one_output(new_name, i, weights, fit_args, train_X, train_y[:,i], **kwargs)
         joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
+        K.clear_session()
+        if 'compilation_args' in kwargs:
+            kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0001, clipnorm=1.)
+
+def aux_net():
+    model_func = partial(models.RNN_aux_loss, rnn_func=keras.layers.CuDNNLSTM, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 300,
+        'embedding_dim' : 300, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy', 'aux_output' : 'binary_crossentropy'}, 'loss_weights' : [1., 0.1]}}
+    return model_params
+
+def simple_one_output_net():
+    model_func = partial(models.RNN_general_one_class, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99, clipvalue=1., clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def toxic_skip_net():
+    model_func = partial(models.RNN_aux_loss_skip, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=48, hidden_dense=20)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy', 'aux_output' : 'binary_crossentropy'}, 'loss_weights' : [1., 1.]}}
+    return model_params
+
+def simple_aug_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_augment, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_embedding_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_general, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_attention_1d(trainable=False, prune=True):
+    model_func = partial(models.RNN_attention_1d, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def conc_attention(trainable=False, prune=True):
+    model_func = partial(models.RNN_diff_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_attention(trainable=False, prune=True):
+    model_func = partial(models.RNN_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_attention_dropout(trainable=False, prune=True):
+    model_params = simple_attention(trainable=trainable, prune=prune)
+    model_params['model_function'] =  partial(models.RNN_dropout_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    return model_params
+
+
+def simple_attention_channel_dropout(trainable=False, prune=True):
+    model_params = simple_attention(trainable=trainable, prune=prune)
+    model_params['model_function'] =  partial(models.RNN_channel_dropout_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    return model_params
+
+def simple_attention_word_dropout(trainable=False, prune=True):
+    model_params = simple_attention(trainable=trainable, prune=prune)
+    model_params['model_function'] = partial(models.RNN_time_dropout_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
+    return model_params
+
+def simple_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_general, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=128)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def shallow_CNN(trainable=False, prune=True):
+    model_func = partial(models.CNN_shallow, n_filters=50, kernel_sizes=[3,4,5], dropout=0.5)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipvalue=1., clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def add_net():
+    model_func = partial(models.RNN_general, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=48)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 400, 'trainable' : False,
+        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, beta_2=0.99, clipvalue=1., clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
 

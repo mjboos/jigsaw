@@ -44,8 +44,8 @@ def write_model(predictions, correct=None,
                 cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']):
     import pandas as pd
     import time
-    if correct:
-        predictions = correct(predictions)
+    if isinstance(predictions, list):
+        predictions = np.concatenate(predictions, axis=-1)
     timestr = time.strftime("%m%d-%H%M")
     subm = pd.read_csv('../input/sample_submission.csv')
     submid = pd.DataFrame({'id': subm["id"]})
@@ -92,6 +92,27 @@ def predictions_for_language(language_dict, test_data=None):
         predictions[languages_test==language, :] = language_dict[language].predict_proba(language_data)
     return predictions
 
+@memory.cache
+def get_fasttext_rank(fasttext_path):
+    rank_index = {}
+    with open(fasttext_path, 'r') as f:
+        for nr, line in enumerate(f):
+            values = line.split()
+            word = values[0]
+            rank_index[word] = nr
+    return rank_index
+
+def make_training_set_preds(model, train_data, train_y, split=0.2):
+    import time
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    split_n = np.round(split*train_data['main_input'].shape[0]).astype('int')
+    predictions = model.predict({label: data[-split_n:] for label, data in train_data.iteritems()})
+    df_dict = {'predictions_{}'.format(lbl) : preds for lbl, preds in zip(cols, predictions.T)}
+    df_dict.update({lbl : lbl_col for lbl, lbl_col in zip(cols, train_y[-split_n:].T)})
+    df_dict['text'] = train_data['main_input'][-split_n:]
+    df = pd.DataFrame(df_dict)
+    df.to_csv('predictions_{}.csv'.format(time.strftime("%m%d-%H%M")))
+
 def dump_trials(trials, fname=''):
     import time
     joblib.dump(trials, '../validation_logs/trial_{}_{}.json'.format(fname, time.strftime("%m%d-%H%M")))
@@ -110,3 +131,4 @@ def join_embedding_vec(word_dict, path):
         except KeyError:
             word_dict[word] = np.concatenate([word_dict[word], np.zeros(n_dim)])
     return word_dict
+

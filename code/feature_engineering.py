@@ -58,3 +58,6 @@ def compute_features(text_df, which_features=None):
         feature_data[:,i] = features
     return feature_data
 
+def caps_vec(input_text):
+    split_text = text.text_to_word_sequence(input_text, filters="\n\t", lower=False)
+    return np.array([1 if (word.isupper() and len(word)>1) else 0 for word in split_text])
