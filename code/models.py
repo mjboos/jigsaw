@@ -551,7 +551,7 @@ def RNN_diff_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_f
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -562,8 +562,10 @@ def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dens
         vals = [x]
     else:
         vals = []
+
+    x = Dropout(dropout_embed, noise_shape=(None, 1, int(x.shape[-1])))(x)
     for rnn_size in hidden_rnn:
-        x = Dropout(dropout)(x, noise_shape=(None, 1, x.shape[-1]))
+        x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
         vals.append(x)
     if len(vals) > 1:
@@ -578,7 +580,7 @@ def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dens
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_time_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_time_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -589,8 +591,9 @@ def RNN_time_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=4
         vals = [x]
     else:
         vals = []
+    x = Dropout(dropout_embed, noise_shape=(None, int(x.shape[1]), 1))(x)
     for rnn_size in hidden_rnn:
-        x = Dropout(dropout)(x, noise_shape=(None, x.shape[1], 1))
+        x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
         vals.append(x)
     if len(vals) > 1:

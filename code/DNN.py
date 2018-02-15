@@ -234,7 +234,7 @@ def simple_attention_1d(trainable=False, prune=True):
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def conc_attention(trainable=False, prune=True):
@@ -242,7 +242,7 @@ def conc_attention(trainable=False, prune=True):
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def simple_attention(trainable=False, prune=True):
@@ -250,7 +250,7 @@ def simple_attention(trainable=False, prune=True):
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def simple_attention_dropout(trainable=False, prune=True):
@@ -270,7 +270,7 @@ def simple_attention_word_dropout(trainable=False, prune=True):
     return model_params
 
 def simple_net(trainable=False, prune=True):
-    model_func = partial(models.RNN_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=1, hidden_rnn=128, hidden_dense=48)
+    model_func = partial(models.RNN_general, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=128)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,

@@ -23,7 +23,7 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateSchedule
 import feature_engineering
 import DNN
 
-def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=3):
+def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=5):
     '''Builds and evaluates a CNN on train_text, train_labels'''
     new_dict = {key:val for key, val in fixed_args.items()}
     new_dict.update(kwargs)
@@ -33,13 +33,13 @@ def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=3):
     Xs = np.zeros((len(X),1), dtype='int8')
     predictions = []
     for train, test in kfold.split(Xs):
-        new_dict['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
+        new_dict['compilation_args']['optimizer'] = new_dict['compilation_args']['optimizer_func'](**new_dict['compilation_args']['optimizer_args'])
         train_x = [X[i] for i in train]
         test_x = [X[i] for i in test]
         model_time = '{}_{}'.format(new_time, time.strftime("%m%d-%H%M"))
         estimator = DNN.fit_model(model_time, fit_args, train_x, y[train], **new_dict)
         predictions.append(estimator.predict(test_x))
-        scores.append(hlp.mean_log_loss(y[test], predictions[-1]))
+        scores.append(roc_auc_score(y[test], predictions[-1]))
         K.clear_session()
     score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
     predictions = np.vstack(predictions)
@@ -84,16 +84,20 @@ def validator(estimator, X, y, cv=3, fit_args={}, **kwargs):
 
 #TODO: add other params
 #TODO: model_func_param
-def hyperopt_token_model(model_name, model_function, space, maxlen=300, max_features=500000):
+def hyperopt_token_model(model_name, model_function, space, fixed_args):
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
 
-    frozen_tokenizer = pre.KerasPaddingTokenizer(maxlen=maxlen,
-            max_features=max_features)
+    # remove keys that are in space from fixed_args
+    all_search_space_keys = space.keys() + list(*[sp[key].keys() for key in sp])
+    fixed_args = {key : val for key, val in fixed_args.iteritems() if key not in all_search_space_keys}
+
+    frozen_tokenizer = pre.KerasPaddingTokenizer(maxlen=fixed_args['maxlen'],
+            max_features=fixed_args['max_features'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
     compilation_args = {'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}
-    fit_args = {'batch_size' : 256, 'epochs' : 30,
+    fit_args = {'batch_size' : 80, 'epochs' : 30,
                       'validation_split' : 0.1}
 
     fixed_args = {'tokenizer':frozen_tokenizer, 'embedding':embedding, 'compilation_args':compilation_args}
@@ -102,7 +106,7 @@ def hyperopt_token_model(model_name, model_function, space, maxlen=300, max_feat
     frozen_model_func = partial(model_function, train_text, train_y, fit_args, fixed_args)
 
     trials = Trials()
-    best = fmin(frozen_model_func, space=space, algo=tpe.suggest, max_evals=5, trials=trials)
+    best = fmin(frozen_model_func, space=space, algo=tpe.suggest, max_evals=20, trials=trials)
     hlp.dump_trials(trials, fname=model_name)
     return best
 
@@ -122,36 +126,32 @@ def validate_feature_model(model_name, model_function, space, fixed_params_file=
 
 def do_hyperparameter_search():
     DNN_search_space = {'model_function' : {'no_rnn_layers' : hp.choice('no_rnn_layers', [2]),
-            'rnn_func' : hp.choice('rnn_func', [models.CuDNNLSTM, models.CuDNNGRU]),
             'hidden_rnn' : hp.quniform('hidden_rnn', 32, 96, 16),
             'hidden_dense' : hp.quniform('hidden_dense', 16, 64, 8)}}
     token_models_to_test = {
-            'DNN' : (DNN_model_validate, DNN_search_space)}
-    for model_name, (func, space) in token_models_to_test.iteritems():
-        best = hyperopt_token_model(model_name, func, space)
+            'DNN' : (DNN_model_validate, DNN_search_space, DNN.simple_attention())}
+    for model_name, (func, space, fixed_args) in token_models_to_test.iteritems():
+        best = hyperopt_token_model(model_name, func, space, fixed_args)
         joblib.dump(best, 'best_{}.pkl'.format(model_name))
 
 def test_models():
-    fit_args = {'batch_size' : 80, 'epochs' : 30,
+    fit_args = {'batch_size' : 80, 'epochs' : 10,
                       'validation_split' : 0.2}
-    fixed_args = DNN.simple_attention_dropout()
+    fixed_args = DNN.simple_attention_channel_dropout()
     kwargs = {}
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
+    adam_args = {'clipnorm' : 1., 'lr' : 0.001}
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=fixed_args['max_features'], maxlen=fixed_args['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
     kwargs['embedding'] = embedding
     kwargs['tokenizer'] = frozen_tokenizer
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
-    fixed_args = DNN.simple_attention()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, adam_args, cv=3)
     fixed_args = DNN.simple_attention_channel_dropout()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
-    fixed_args = DNN.simple_attention_word_dropout()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=3)
-
-
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, adam_args, cv=3)
+    fixed_args = DNN.conc_attention()
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, adam_args, cv=3)
 
 if __name__=='__main__':
     test_models()
