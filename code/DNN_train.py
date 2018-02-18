@@ -41,6 +41,7 @@ fit_args = {'batch_size' : 80, 'epochs' : 30,
 train_text, train_y = pre.load_data()
 test_text, _  = pre.load_data('test.csv')
 if __name__=='__main__':
+    import keras_lr_finder as lrf
     # for toxic skip
     aux_task = train_y[:,0]
 #    train_y = np.delete(train_y, 0, axis=1)
@@ -51,10 +52,27 @@ if __name__=='__main__':
     loss = partial(models.weighted_binary_crossentropy, weights=weight_tensor)
     loss.__name__ = 'weighted_binary_crossentropy'
     model_params = simple_attention(trainable=False)
-    model_name = '300_fasttext_attention_smaller_voc_GRU'
+    model_name = '300_fasttext_attention_avg_meta_ft_GRU'
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
+    list_of_tokens = frozen_tokenizer.tokenizer.texts_to_sequences(pd.concat([train_text, test_text]))
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    opt = model_params['compilation_args'].pop('optimizer_func')
+    optargs = model_params['compilation_args'].pop('optimizer_args')
+    model_params['compilation_args']['optimizer'] = opt(**optargs)
+#    old_model = models.Embedding_Blanko_DNN(tokenizer=frozen_tokenizer, embedding=embedding, **model_params).model
+#    old_model.load_weights(model_name+'_best.hdf5')
+#    lrfinder = lrf.LRFinder(model.model)
+#    train_x = frozen_tokenizer.transform(train_text)
+#    lrfinder.find(train_x, train_y, 0.0001, 0.01, batch_size=80, epochs=1)
+#    lrfinder.plot_loss()
+#    plt.savefig('losses_2.svg')
+#    plt.close()
+#    lrfinder.plot_loss_change()
+#    plt.savefig('loss_change_2.svg')
+#    plt.close()
+#    joblib.dump([lrfinder.losses, lrfinder.lrs], 'lrfinder.pkl')
+
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
     # SHUFFLE TRAINING SET so validation split is different every time
 #    row_idx = np.arange(0, train_text.shape[0])
@@ -62,7 +80,7 @@ if __name__=='__main__':
 #    train_text, train_y, aux_task, train_data_augmentation = train_text[row_idx], train_y[row_idx], aux_task[row_idx], train_data_augmentation[row_idx]
 #    model = load_keras_model(model_name)
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output': train_y}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
+    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output': train_y}, embedding=embedding, tokenizer=frozen_tokenizer, list_of_tokens=list_of_tokens, **model_params)
     hlp.write_model(model.predict({'main_input':test_text,'aug_input':test_data_augmentation}))
     hlp.make_training_set_preds(model, {'main_input':train_text, 'aug_input':train_data_augmentation}, train_y)
 #    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output':train_y, 'aux_output':aux_task}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
@@ -71,4 +89,7 @@ if __name__=='__main__':
 #    K.clear_session()
 #    model = continue_training_DNN(model_name, fit_args, train_text, train_y, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    model_params = simple_attention_1d()
-#    extend_and_finetune_last_layer_model(model_name, fit_args, train_text, train_y, test_text, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
+#    opt = model_params['compilation_args'].pop('optimizer_func')
+#    optargs = model_params['compilation_args'].pop('optimizer_args')
+#    model_params['compilation_args']['optimizer'] = opt(**optargs)
+#    finetune_model(model_name, old_model, fit_args, train_text, train_y, test_text, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)

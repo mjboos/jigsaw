@@ -53,6 +53,7 @@ def continue_training_DNN_last_layer(model_name, old_model_name, fit_args, *args
     best_weights_path="{}_best.hdf5".format(model_name)
     old_weights_path="{}_best.hdf5".format(old_model_name)
     model = models.Embedding_Blanko_DNN(**kwargs)
+    old_model = load_keras_model(old_model_name)
     model.model.load_weights(old_weights_path)
     model.model = freeze_layers(model.model, unfrozen_keyword='main_output')
     callbacks_list = make_callback_list(best_weights_path, patience=5)
@@ -167,16 +168,16 @@ def change_trainable(layer, trainable, verbose=False):
 def extend_and_finetune_last_layer_model(model_name, fit_args, train_X, train_y, test_text, **kwargs):
     '''Fits and returns a model for one label (provided as index i)'''
     if 'compilation_args' in kwargs:
-        kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
+        kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0005, clipnorm=1.)
     for i in xrange(6):
         new_name = model_name + '_{}'.format(i)
         model = continue_training_DNN_last_layer(new_name, model_name, fit_args, train_X, train_y[:,i], **kwargs)
         joblib.dump(model.predict(test_text), '{}.pkl'.format(new_name))
         K.clear_session()
         if 'compilation_args' in kwargs:
-            kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.001, clipnorm=1.)
+            kwargs['compilation_args']['optimizer'] = optimizers.Adam(lr=0.0005, clipnorm=1.)
 
-def fine_tune_model(model_name, old_model, fit_args, train_X, train_y, test_text, **kwargs):
+def finetune_model(model_name, old_model, fit_args, train_X, train_y, test_text, **kwargs):
     '''Fits and returns a model for one label (provided as index i)'''
     weights = [layer.get_weights() for layer in old_model.layers]
     if 'compilation_args' in kwargs:
@@ -234,7 +235,7 @@ def simple_attention_1d(trainable=False, prune=True):
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def conc_attention(trainable=False, prune=True):
@@ -242,15 +243,15 @@ def conc_attention(trainable=False, prune=True):
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def simple_attention(trainable=False, prune=True):
     model_func = partial(models.RNN_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
-        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'opzimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune, 'augment_data' : False,
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def simple_attention_dropout(trainable=False, prune=True):

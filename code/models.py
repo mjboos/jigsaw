@@ -41,6 +41,33 @@ corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
+some_bad_words = [u'bastard',
+ u'jerk',
+ u'moron',
+ u'idiot',
+ u'retard',
+ u'assfucker',
+ u'arsehole',
+ u'assfuck',
+ u'fuckhead',
+ u'fuckwit',
+ u'cocksucker',
+ u'asshole',
+ u'bullshit',
+ u'motherfucker',
+ u'fucked',
+ u'shit',
+ u'fuck',
+ u'fucking',
+ u'gay',
+ u'fag',
+ u'faggot',
+ u'bitch',
+ u'whore',
+ u'fucker',
+ u'nigg',
+ u'nigger']
+
 @memory.cache
 def get_fixed_DNN_params():
     model_params = {
@@ -148,21 +175,62 @@ def correct_spelling_pyench(word):
     else:
         return None
 
-def prune_matrix_and_tokenizer(embedding_matrix, tokenizer):
+def word_to_replace(word):
+    '''returns the word, word is to be replaced with'''
+    import re
+    for repl_word in some_bad_words[::-1]:
+        if re.search(r'^.*{}.*$'.format(repl_word), word) is not None and repl_word != 'homo':
+            return repl_word
+    else:
+        return None
+
+def mean_embedding_for_token(token, list_of_tokens, embedding_matrix):
+    from itertools import chain
+    embedding_list = []
+    for token_comment in list_of_tokens:
+        if token not in token_comment:
+            continue
+        embedding_list.append(token_comment)
+    embedding_list = list(chain.from_iterable(embedding_list))
+    try:
+        mean_embedding = np.concatenate([embedding[:,None] for embedding in embedding_matrix[token_comment] if embedding.any()], axis=-1).mean(axis=-1)
+    except ValueError:
+        mean_embedding = np.zeros((embedding_matrix.shape[1],))
+    return mean_embedding
+
+#TODO: average for all token types
+def prune_matrix_and_tokenizer(embedding_matrix, tokenizer, replace_words=True,
+                               meta_features=True, list_of_tokens=None, debug=False):
     '''Prunes the embedding matrix and tokenizer by replacing all words corresponding to zero vectors (in embedding matrix) with an id for unknown word.
     This id is the number of known words + 1.'''
     import operator
     import copy
     tokenizer = copy.deepcopy(tokenizer)
-    word_list = which_words_are_zero_vectors(embedding_matrix, tokenizer.word_index, tokenizer.oov_token)
+    word_list = which_words_are_zero_vectors(embedding_matrix, tokenizer)
+    replace_dict = {}
+
     for word in word_list:
+        if list_of_tokens and meta_features:
+            if word.startswith('_') and word.endswith('_'):
+                token = tokenizer.word_index[word]
+                embedding_matrix[token] = mean_embedding_for_token(token, list_of_tokens, embedding_matrix)
+                continue
         tokenizer.word_index.pop(word, None)
         tokenizer.word_docs.pop(word, None)
         tokenizer.word_counts.pop(word, None)
 
+        if replace_words:
+            repl_word = word_to_replace(word)
+            if repl_word:
+                replace_dict[word] = repl_word
     # now reorder ranks
     ranked_words, _ = zip(*sorted(tokenizer.word_index.items(), key=operator.itemgetter(1)))
     tokenizer.word_index = {word : rank+1 for rank, word in enumerate(ranked_words)}
+    if replace_words:
+        for word, repl_word in replace_dict.iteritems():
+            tokenizer.word_index[word] = tokenizer.word_index[repl_word]
+        if debug:
+            return prune_zero_vectors(embedding_matrix), tokenizer, replace_dict
     return prune_zero_vectors(embedding_matrix), tokenizer
 
 def prune_zero_vectors(matrix):
@@ -170,12 +238,11 @@ def prune_zero_vectors(matrix):
     matrix = matrix[np.array([True] + [vec.any() for vec in matrix[1:-1]] + [True])]
     return matrix
 
-def which_words_are_zero_vectors(embedding_matrix, word_index, oov_token, exclude_ids=False):
+def which_words_are_zero_vectors(embedding_matrix, tokenizer, exclude_ids=False):
     '''Returns a list of words which are zero vectors (not found) in the embedding matrix'''
     word_list = []
-    DEBUG_cnt = 0
-    for word, i in word_index.items():
-        if word == oov_token:
+    for word, i in tokenizer.word_index.items():
+        if word == tokenizer.oov_token:
             continue
         if exclude_ids:
             if word.startswith('_') and word.endswith('_'):
@@ -187,11 +254,10 @@ def which_words_are_zero_vectors(embedding_matrix, word_index, oov_token, exclud
         elif not embedding_matrix[i].any():
             # word is a zero vector
             word_list.append(word)
-    print DEBUG_cnt
     return word_list
 
-#TODO: more flexible spelling correction
-def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200, embedding_dim=50, meta_features=True, **kwargs):
+def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200,
+                          embedding_dim=50, meta_features=False, **kwargs):
     num_words = min(max_features, len(word_index))
     # add one element for zero vector
     embedding_matrix = np.zeros((num_words+1, embedding_dim))
@@ -207,7 +273,6 @@ def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200,
         elif meta_features:
             if word.startswith('_') and word.endswith('_'):
                 embedding_matrix[i] = np.random.uniform(-1, 1, size=(embedding_dim,))
-
     return embedding_matrix
 
 def make_embedding_layer(embedding_matrix, maxlen=200, l2=1e-6, trainable=False, **kwargs):
@@ -231,32 +296,9 @@ def reduce_embedding_matrix_in_size(embedding_matrix, eliminate=30, **kwargs):
     embedding_matrix[1:-1, :embedding2.shape[1]] = embedding2
     embedding_matrix = embedding_matrix[:,: embedding2.shape[1]]
 
-def reduce_embedding_size(X_train):
-    X_train = X_train.copy()
-    pca =  PCA(n_components = 300)
-    X_train = X_train - np.mean(X_train)
-    X_fit = pca.fit_transform(X_train)
-    U1 = pca.components_
-
-    pca_embeddings = {}
-    z = []
-
-    # Removing Projections on Top Components
-    for i, x in enumerate(X_train):
-        for u in U1[0:7]:
-            x = x - np.dot(u.transpose(),x) * u
-        z.append(x)
-    z = np.asarray(z).astype(np.float32)    
-
-    # PCA for Dim Reduction
-    pca =  PCA(n_components = 150)
-    X_train = z - np.mean(z)
-    X_new = pca.fit_transform(X_train)
-    return X_new
-
-def add_oov_vector_and_prune(embedding_matrix, tokenizer):
+def add_oov_vector_and_prune(embedding_matrix, tokenizer, list_of_tokens=None):
     embedding_matrix = np.vstack([embedding_matrix, np.zeros((1, embedding_matrix.shape[1]))])
-    return prune_matrix_and_tokenizer(embedding_matrix, tokenizer)
+    return prune_matrix_and_tokenizer(embedding_matrix, tokenizer, list_of_tokens=list_of_tokens)
 
 def make_model_function(**kwargs):
     return partial(RNN_general, **kwargs)
@@ -269,11 +311,12 @@ def data_augmentation(text_df, labels):
     new_text = new_text.str.replace('_number_', ' ')
     new_text = new_text.str.replace('_url_', ' ')
     new_text = new_text.str.strip()
-    return pd.concat([text_df, new_text], ignore_index=True), np.tile(labels, (2,1))
+    concat_df = pd.concat([text_df, new_text]).sort_index().reset_index(drop=True)
+    return concat_df, np.tile(labels, (2,1))
 
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,
-            maxlen=300, embedding_dim=300, halfprec=False, trainable=False, prune=True, augment_data=False,
+            maxlen=300, embedding_dim=300, trainable=False, prune=True, augment_data=False, list_of_tokens=None,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
         self.max_features = max_features
@@ -309,7 +352,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             word_index = self.tokenizer.tokenizer.word_index
             embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim)
             if self.prune:
-                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
+                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer, list_of_tokens=list_of_tokens)
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen,
                     trainable=self.trainable)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
@@ -322,13 +365,13 @@ class Embedding_Blanko_DNN(BaseEstimator):
             self.model = Model(inputs=inputs, outputs=outputs)
             self.model.compile(**self.compilation_args)
 
-    def fit(self, X, y, **kwargs):
+    def fit(self, X, y, list_of_tokens=None, **kwargs):
         if not self.tokenizer.is_trained:
             self.tokenizer.fit(X)
             word_index = self.tokenizer.tokenizer.word_index
             embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim)
             if self.prune:
-                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer)
+                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer, list_of_tokens=list_of_tokens)
             if self.halfprec:
                 embedding_matrix = embedding_matrix.astype('float16')
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable,  preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
@@ -351,7 +394,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             X['main_input'] = self.tokenizer.transform(X['main_input'])
         else:
             if self.augment_data:
-                 if isinstance(y, dict):
+                if isinstance(y, dict):
                     X, y['main_output'] = data_augmentation(X, y['main_output'])
                 else:
                     X, y = data_augmentation(X, y)
@@ -655,7 +698,6 @@ def RNN_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rn
     x = Dropout(dropout_dense)(x)
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return x, None
-
 
 def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
     if rnn_func is None:

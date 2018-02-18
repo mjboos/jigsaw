@@ -104,7 +104,7 @@ def clean_comment(text, replace_misspellings=False):
     #shorten words
     s = re.sub(r'(\w)\1\1+', r' \1\1 ', s)
 
-    s = re.sub(r'([.,!?():;^`<=>$%&@|{}\-+\[\]#~*\/"])', r' \1 ', s)
+    s = re.sub(r'([.,!?():;^`<=>$%&@|{}\-+\[\]#~*\\/"])', r' \1 ', s)
     s = re.sub(r"(['])", r' \1 ', s)
     s = re.sub('\s{2,}', ' ', s)
     if replace_misspellings:
@@ -112,7 +112,6 @@ def clean_comment(text, replace_misspellings=False):
             s = re.sub(r'\b{}\b'.format(key.lower()), ' '+val.lower()+' ', s)
     return s.encode('utf-8')
 
-@memory.cache
 def data_preprocessing(df, replace_misspellings=False):
     df['comment_text'].fillna(' ', inplace=True)
     clean_comment_dummy = partial(clean_comment, replace_misspellings=replace_misspellings)
@@ -139,7 +138,7 @@ def keras_pad_sequence_to_sklearn_transformer(maxlen=100):
 
 class KerasPaddingTokenizer(BaseEstimator, TransformerMixin):
     def __init__(self, max_features=20000, maxlen=200,
-            filters="\t\n{}&%$§^°[]<>|@[]+`' ", **kwargs):
+            filters="\t\n{}&%$§^°[]<>|@[]+`'\\/", **kwargs):
         self.max_features = max_features
         self.maxlen = maxlen
         self.is_trained = False

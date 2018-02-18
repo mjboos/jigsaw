@@ -32,14 +32,17 @@ def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=5):
     scores = []
     Xs = np.zeros((len(X),1), dtype='int8')
     predictions = []
+    opt = new_dict['compilation_args'].pop('optimizer_func')
+    optargs = new_dict['compilation_args'].pop('optimizer_args')
     for train, test in kfold.split(Xs):
-        new_dict['compilation_args']['optimizer'] = new_dict['compilation_args']['optimizer_func'](**new_dict['compilation_args']['optimizer_args'])
-        train_x = [X[i] for i in train]
-        test_x = [X[i] for i in test]
+        new_dict['compilation_args']['optimizer'] = opt(**optargs)
+        train_x = X.loc[train]
+        test_x = X.loc[test]
         model_time = '{}_{}'.format(new_time, time.strftime("%m%d-%H%M"))
         estimator = DNN.fit_model(model_time, fit_args, train_x, y[train], **new_dict)
         predictions.append(estimator.predict(test_x))
         scores.append(roc_auc_score(y[test], predictions[-1]))
+        joblib.dump(scores, '../scores/{}.pkl'.format(new_time))
         K.clear_session()
     score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
     predictions = np.vstack(predictions)
@@ -137,21 +140,18 @@ def do_hyperparameter_search():
 def test_models():
     fit_args = {'batch_size' : 80, 'epochs' : 10,
                       'validation_split' : 0.2}
-    fixed_args = DNN.simple_attention_channel_dropout()
+    fixed_args = DNN.simple_attention()
     kwargs = {}
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
-    adam_args = {'clipnorm' : 1., 'lr' : 0.001}
+    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.001}
+    fixed_args['compilation_args']['optimizer_func'] = optimizers.Adam
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=fixed_args['max_features'], maxlen=fixed_args['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
     kwargs['embedding'] = embedding
     kwargs['tokenizer'] = frozen_tokenizer
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, adam_args, cv=3)
-    fixed_args = DNN.simple_attention_channel_dropout()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, adam_args, cv=3)
-    fixed_args = DNN.conc_attention()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, adam_args, cv=3)
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
 
 if __name__=='__main__':
     test_models()
