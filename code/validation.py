@@ -138,19 +138,25 @@ def do_hyperparameter_search():
         joblib.dump(best, 'best_{}.pkl'.format(model_name))
 
 def test_models():
-    fit_args = {'batch_size' : 80, 'epochs' : 10,
+    fit_args = {'batch_size' : 80, 'epochs' : 20,
                       'validation_split' : 0.2}
-    fixed_args = DNN.simple_attention()
+    fixed_args = DNN.conc_attention()
     kwargs = {}
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
-    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.001}
+    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.0005}
     fixed_args['compilation_args']['optimizer_func'] = optimizers.Adam
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=fixed_args['max_features'], maxlen=fixed_args['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
     kwargs['embedding'] = embedding
     kwargs['tokenizer'] = frozen_tokenizer
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
+    fixed_args = DNN.one_gru_attention()
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
+    fixed_args = DNN.conc_attention()
+    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
+    fixed_args = DNN.simple_huge_attention()
     DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
 
 if __name__=='__main__':

@@ -584,6 +584,31 @@ def RNN_attention_1d(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fun
     x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
 
+def RNN_one_gru_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    if train_embedding:
+        vals = [x]
+    else:
+        vals = []
+
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+    att = AttentionWeightedAverage(name='attlayer')(x)
+    x = concatenate([att, GlobalMaxPool1D()(x), Lambda(lambda x : x[:,-1, :])(x)])
+#    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+    x = Dropout(dropout_dense)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+
 def RNN_diff_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
@@ -802,10 +827,12 @@ def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, 
         hidden_rnn = [hidden_rnn] * no_rnn_layers
     if len(hidden_rnn) != no_rnn_layers:
         raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    vals = []
     for rnn_size in hidden_rnn:
         x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
-    x = concatenate([GlobalAveragePooling1D()(x), GlobalMaxPool1D()(x), Lambda(lambda x : x[:,-1, :])(x)])
+        vals.append(x)
+    x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
     x = Dropout(dropout)(x)
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
