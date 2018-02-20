@@ -140,11 +140,11 @@ def do_hyperparameter_search():
 def test_models():
     fit_args = {'batch_size' : 80, 'epochs' : 20,
                       'validation_split' : 0.2}
-    fixed_args = DNN.conc_attention()
+    fixed_args = DNN.simple_huge_net()
     kwargs = {}
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
-    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.0005}
+    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.001}
     fixed_args['compilation_args']['optimizer_func'] = optimizers.Adam
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=fixed_args['max_features'], maxlen=fixed_args['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
@@ -152,12 +152,28 @@ def test_models():
     kwargs['embedding'] = embedding
     kwargs['tokenizer'] = frozen_tokenizer
     DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
-    fixed_args = DNN.one_gru_attention()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
+
+def make_average_test_set_predictions(model_name):
+    import glob
+    all_model_names = [mname.split('_best')[0] for mname in glob.glob(model_name + '*')]
     fixed_args = DNN.conc_attention()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
-    fixed_args = DNN.simple_huge_attention()
-    DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
+    train_text, train_y = pre.load_data()
+    test_text, _ = pre.load_data('test.csv')
+    frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=fixed_args['max_features'], maxlen=fixed_args['maxlen'])
+    frozen_tokenizer.fit(pd.concat([train_text, test_text]))
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    fixed_args['compilation_args'].pop('optimizer_args')
+    fixed_args['compilation_args'].pop('optimizer_func')
+    fixed_args['compilation_args']['optimizer'] = 'adam'
+    prediction_list = []
+    for submodel_name in all_model_names:
+        model = DNN.load_full_model(submodel_name, embedding=embedding, tokenizer=frozen_tokenizer, **fixed_args)
+        prediction_list.append(model.predict(test_text)[..., None])
+    predictions = np.concatenate(prediction_list, axis=-1)
+    predictions = predictions.mean(axis=-1)
+    hlp.write_model(predictions)
+
 
 if __name__=='__main__':
+#    make_average_test_set_predictions('cval_0218-1903')
     test_models()

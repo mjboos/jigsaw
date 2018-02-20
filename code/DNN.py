@@ -238,15 +238,6 @@ def simple_attention_1d(trainable=False, prune=True):
         'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
-def one_gru_attention(trainable=False, prune=True):
-    model_func = partial(models.RNN_diff_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
-    model_params = {
-        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
-        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
-    return model_params
-
-
 def conc_attention(trainable=False, prune=True):
     model_func = partial(models.RNN_diff_attention, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, dropout_dense=0.5, dropout=0.5, train_embedding=False)
     model_params = {
