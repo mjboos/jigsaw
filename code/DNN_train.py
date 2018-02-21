@@ -35,7 +35,7 @@ lr = LearningRateScheduler(schedule)
 
 
 callbacks_list = [checkpoint, early] #early
-fit_args = {'batch_size' : 80, 'epochs' : 30,
+fit_args = {'batch_size' : 128, 'epochs' : 30,
                   'validation_split' : 0.2, 'callbacks' : callbacks_list}
 
 train_text, train_y = pre.load_data()
@@ -51,26 +51,26 @@ if __name__=='__main__':
     weight_tensor = tf.convert_to_tensor(class_weights, dtype=tf.float32)
     loss = partial(models.weighted_binary_crossentropy, weights=weight_tensor)
     loss.__name__ = 'weighted_binary_crossentropy'
-    model_params = simple_attention(trainable=False)
-    model_name = '300_fasttext_attention_avg_meta_ft_GRU'
+    model_params = simple_small_trainable_net(trainable=True, prune=True)
+    model_name = '300_fasttext_trainable_all_GRU'
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
     list_of_tokens = frozen_tokenizer.tokenizer.texts_to_sequences(pd.concat([train_text, test_text]))
-    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    embedding = hlp.get_glove_embedding('../glove.twitter.27B.200d.txt')
     opt = model_params['compilation_args'].pop('optimizer_func')
     optargs = model_params['compilation_args'].pop('optimizer_args')
     model_params['compilation_args']['optimizer'] = opt(**optargs)
-#    old_model = models.Embedding_Blanko_DNN(tokenizer=frozen_tokenizer, embedding=embedding, **model_params).model
+    model = models.Embedding_Blanko_DNN(tokenizer=frozen_tokenizer, embedding=embedding, **model_params)
 #    old_model.load_weights(model_name+'_best.hdf5')
-#    lrfinder = lrf.LRFinder(model.model)
-#    train_x = frozen_tokenizer.transform(train_text)
-#    lrfinder.find(train_x, train_y, 0.0001, 0.01, batch_size=80, epochs=1)
-#    lrfinder.plot_loss()
-#    plt.savefig('losses_2.svg')
-#    plt.close()
-#    lrfinder.plot_loss_change()
-#    plt.savefig('loss_change_2.svg')
-#    plt.close()
+    lrfinder = lrf.LRFinder(model.model)
+    train_x = frozen_tokenizer.transform(train_text)
+    lrfinder.find(train_x, train_y, 0.0001, 0.01, batch_size=80, epochs=1)
+    lrfinder.plot_loss()
+    plt.savefig('losses_small.svg')
+    plt.close()
+    lrfinder.plot_loss_change()
+    plt.savefig('loss_change_small.svg')
+    plt.close()
 #    joblib.dump([lrfinder.losses, lrfinder.lrs], 'lrfinder.pkl')
 
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
@@ -80,9 +80,9 @@ if __name__=='__main__':
 #    train_text, train_y, aux_task, train_data_augmentation = train_text[row_idx], train_y[row_idx], aux_task[row_idx], train_data_augmentation[row_idx]
 #    model = load_keras_model(model_name)
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output': train_y}, embedding=embedding, tokenizer=frozen_tokenizer, list_of_tokens=list_of_tokens, **model_params)
-    hlp.write_model(model.predict({'main_input':test_text,'aug_input':test_data_augmentation}))
-    hlp.make_training_set_preds(model, {'main_input':train_text, 'aug_input':train_data_augmentation}, train_y)
+#    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output': train_y}, embedding=embedding, tokenizer=frozen_tokenizer, list_of_tokens=list_of_tokens, **model_params)
+#    hlp.write_model(model.predict({'main_input':test_text,'aug_input':test_data_augmentation}))
+#    hlp.make_training_set_preds(model, {'main_input':train_text, 'aug_input':train_data_augmentation}, train_y)
 #    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output':train_y, 'aux_output':aux_task}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    model = continue_training_DNN(model_name, fit_args, train_text, train_y, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    hlp.write_model(model.predict(test_text))

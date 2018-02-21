@@ -36,6 +36,10 @@ import string
 import json
 import enchant
 import copy
+from keras.engine.topology import Layer
+import keras.backend as K
+from keras import initializers
+
 
 corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans
@@ -313,6 +317,52 @@ def data_augmentation(text_df, labels):
     new_text = new_text.str.strip()
     concat_df = pd.concat([text_df, new_text]).sort_index().reset_index(drop=True)
     return concat_df, np.tile(labels, (2,1))
+
+class EmbeddingSemiTrainable(Layer):
+    def __init__(self, input_dim, output_dim, fixed_weights, embeddings_initializer='uniform', 
+                 input_length=None, **kwargs):
+        kwargs['dtype'] = 'int32'
+        if 'input_shape' not in kwargs:
+            if input_length:
+                kwargs['input_shape'] = (input_length,)
+            else:
+                kwargs['input_shape'] = (None,)
+        super(EmbeddingSemiTrainable, self).__init__(**kwargs)
+
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.embeddings_initializer = embeddings_initializer
+        self.fixed_weights = fixed_weights
+        self.num_trainable = input_dim - len(fixed_weights)
+        self.input_length = input_length
+
+    def build(self, input_shape, name='embeddings'):
+        initializer = initializers.get(self.embeddings_initializer)
+        shape1 = (self.num_trainable, self.output_dim)
+        variable_weight = K.variable(initializer(shape1), dtype=K.floatx(), name=name+'_var')
+
+        fixed_weight = K.variable(self.fixed_weights, name=name+'_fixed')
+
+
+        self._trainable_weights.append(variable_weight)
+        self._non_trainable_weights.append(fixed_weight)
+
+        self.embeddings = K.concatenate([fixed_weight, variable_weight], axis=0)
+
+        self.built = True
+
+    def call(self, inputs):
+        if K.dtype(inputs) != 'int32':
+            inputs = K.cast(inputs, 'int32')
+        out = K.gather(self.embeddings, inputs)
+        return out
+
+    def compute_output_shape(self, input_shape):
+        if not self.input_length:
+            input_length = input_shape[1]
+        else:
+            input_length = self.input_length
+        return (input_shape[0], input_length, self.output_dim)
 
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,

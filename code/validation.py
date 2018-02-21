@@ -138,24 +138,24 @@ def do_hyperparameter_search():
         joblib.dump(best, 'best_{}.pkl'.format(model_name))
 
 def test_models():
-    fit_args = {'batch_size' : 80, 'epochs' : 20,
+    fit_args = {'batch_size' : 128, 'epochs' : 20,
                       'validation_split' : 0.2}
-    fixed_args = DNN.simple_huge_net()
+    fixed_args = DNN.simple_small_trainable_net()
     kwargs = {}
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
-    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.001}
+    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.0005}
     fixed_args['compilation_args']['optimizer_func'] = optimizers.Adam
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=fixed_args['max_features'], maxlen=fixed_args['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
-    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+    embedding = hlp.get_glove_embedding('../glove.twitter.27B.200d.txt')
     kwargs['embedding'] = embedding
     kwargs['tokenizer'] = frozen_tokenizer
     DNN_model_validate(train_text, train_y, fit_args, fixed_args, kwargs, cv=6)
 
 def make_average_test_set_predictions(model_name):
     import glob
-    all_model_names = [mname.split('_best')[0] for mname in glob.glob(model_name + '*')]
+    all_model_names = [mname for mname in glob.glob(model_name + '*')]
     fixed_args = DNN.conc_attention()
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
@@ -166,14 +166,72 @@ def make_average_test_set_predictions(model_name):
     fixed_args['compilation_args'].pop('optimizer_func')
     fixed_args['compilation_args']['optimizer'] = 'adam'
     prediction_list = []
-    for submodel_name in all_model_names:
-        model = DNN.load_full_model(submodel_name, embedding=embedding, tokenizer=frozen_tokenizer, **fixed_args)
+    model = DNN.load_full_model(all_model_names[0].split('_best')[0], embedding=embedding, tokenizer=frozen_tokenizer, **fixed_args)
+    prediction_list.append(model.predict(test_text)[..., None])
+    for submodel_name in all_model_names[1:]:
+        model.model.load_weights(submodel_name)
         prediction_list.append(model.predict(test_text)[..., None])
     predictions = np.concatenate(prediction_list, axis=-1)
     predictions = predictions.mean(axis=-1)
-    hlp.write_model(predictions)
+#    hlp.write_model(predictions)
+    joblib.dump(predictions, '../predictions/test_set_{}.pkl'.format(model_name))
 
+def report_ensembling(model_name_list, ensemble_name='generic'):
+    from scipy.optimize import minimize
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    prediction_dict = {model_name : joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
+    for i,col in enumerate(cols):
+        predictions_col_df = pd.DataFrame.from_dict({model_name : prediction[:,i] for model_name, prediction in prediction_dict.iteritems()})
+        g = sns.pairplot(predictions_col_df, kind='reg')
+        plt.savefig('../reports/{}_ensemble_{}.png'.format(ensemble_name, col))
+        plt.close()
+
+def stack_ensembling(predictions_col_dict, clf_func, train_y):
+    from sklearn.model_selection import cross_val_score
+    from sklearn.metrics import roc_auc_score
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    estimator_list = {}
+    score_list = {}
+    for i, col in enumerate(cols):
+        predictions_col = predicitons_col_dict[col]
+        classifier = clf_func()
+        score_list[col] = cross_val_score(classifier, predictions_col, train_y[:,i], cv=6, scoring='roc_auc')
+        estimator_list[col] = clf_func().fit(predictions_col, train_y[:,i])
+    return estimator_list, score_list
+#        gbr = GradientBoostingClassifier(n_estimators=50)
+
+def test_meta_models(model_name_list, meta_features=None):
+    from scipy.special import logit, expit
+    from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier
+    from sklearn.linear_model import LogisticRegressionCV
+    from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+    classifier_dict = {'logistic_regression' : LogisticRegressionCV,
+                       'extra_trees' : partial(GridSearchCV, ExtraTreesClassifier, {'n_estimators' : [5, 10, 15]}),
+                       'gbc' : partial(GridSearchCV, GradientBoostingClassifier, {'n_estimators' : [50, 100, 150], 'max_depth' : [2, 3, 4]})}
+    _, train_y = pre.load_data()
+    prediction_dict = {model_name : joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    predictions_col_dict = {}
+    for i, col in enumerate(cols):
+        pred_col = np.hstack([logit(prediction_dict[model_name][:,i])[:,None] for model_name in sorted(prediction_dict.keys())])
+        if meta_features:
+            pred_col = np.hstack([pred_col, meta_features])
+        predictions_col_dict[col] = pred_col
+
+    result_dict = { meta_model : stack_ensembling(predictions_col_dict, clf_func, train_y) for meta_model, clf_func in classifier_dict.iteritems()}
+    result_dict['model_names'] = model_name_list
+    return result_dict
+
+def apply_meta_models(estimator_dict, test_predictions):
+    '''same order necessary for estimator_dict and test_predictions'''
+    pass
 
 if __name__=='__main__':
-#    make_average_test_set_predictions('cval_0218-1903')
-    test_models()
+#    joblib.dump(big_dict = test_meta_models(['cval_0215-1830', 'cval_0218-1903', 'cval_0219-0917', 'cval_0220-1042']), 'test_meta_models.pkl')
+#    report_ensembling(['cval_0218-1903', 'cval_0219-0917', 'cval_0220-1042'], 'attention_and_huge_ensemble')
+#    estimator_list, score_list = stack_ensembling(['cval_0218-1903', 'cval_0215-1830', 'cval_0219-0917', 'cval_0220-1042'], 'attention_and_huge_ensemble')
+    for model in ['cval_0215-1830', 'cval_0218-1903', 'cval_0219-0917', 'cval_0220-1042']:
+        make_average_test_set_predictions(model)
+#    test_models()

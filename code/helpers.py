@@ -53,6 +53,10 @@ def write_model(predictions, correct=None,
     submission.to_csv('../submissions/submission_{}.csv'.format(timestr), index=False)
 
 def logit(x):
+    if x == 1.:
+        x -= np.finfo(np.float32).eps
+    elif x == 0.:
+        x += np.finfo(np.float32).eps
     return np.log(x/(1-x))
 
 def sparse_to_dense(X):
