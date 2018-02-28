@@ -39,7 +39,8 @@ import copy
 from keras.engine.topology import Layer
 import keras.backend as K
 from keras import initializers
-
+from nltk.corpus import stopwords
+eng_stopwords = set(stopwords.words("english"))
 
 corr_dict1 = enchant.request_dict('en_US')
 maketrans = string.maketrans
@@ -52,6 +53,7 @@ some_bad_words = [u'bastard',
  u'retard',
  u'assfucker',
  u'arsehole',
+ u'nazi',
  u'assfuck',
  u'fuckhead',
  u'fuckwit',
@@ -127,15 +129,19 @@ class NBMLR(BaseEstimator):
     def predict_proba(self, X):
         return self.lr.predict_proba(X.multiply(self.r))
 
-def tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
+import re, string
+re_tok = re.compile('([{}“”¨«»®´·º½¾¿¡§£₤‘’])'.format(string.punctuation))
+def tokenize(s): return re_tok.sub(r' \1 ', s).split()
+
+def get_tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
                             'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
-                            'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1},
-                            model_func=None, **kwargs):
-    '''Returns unfitted tfidf_NBSVM pipeline object'''
-    if model_func is None:
-        model_func = NBMLR
-    return pipe.Pipeline(steps=[('tfidf', TfidfVectorizer(**pre_args)),
-                                               ('model', MultiOutputClassifier(model_func(**kwargs)))])
+                            'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1}):
+    if pre_args['tokenizer'] is None:
+        pre_args['tokenizer'] = tokenize
+    train_text, train_y = pre.load_data()
+    test_text, _ = pre.load_data()
+    tfidf = TfidfVectorizer(stop_words=eng_stopwords, **pre_args).fit(pd.concat([train_text, test_text]))
+    return tfidf
 
 def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
     if model_function is None:
@@ -575,24 +581,6 @@ def RNN_aux_aug(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=Non
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
-def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1):
-    if rnn_func is None:
-        rnn_func = LSTM
-    if not isinstance(hidden_rnn, list):
-        hidden_rnn = [hidden_rnn] * no_rnn_layers
-    if len(hidden_rnn) != no_rnn_layers:
-        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
-    for rnn_size in hidden_rnn:
-        x = Dropout(dropout)(x)
-        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(dropout)(x)
-    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(x)
-    x = Dense(hidden_dense, activation='relu')(x)
-    x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
-    return [x, aux_dense], None
-
 def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.8, input_len=500):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
@@ -870,6 +858,71 @@ def RNN_augment(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=Non
     x = Dense(6, activation="sigmoid", name='main_output')(x)
     return x, aug_input
 
+def RNN_conc_aux(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    vals = []
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+#    y = GlobalMaxPool1D()(x)
+#    y = Dropout(dropout)(y)
+#    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(y)
+    x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+    x = Dropout(dropout)(x)
+    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(y)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+#    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return [x, aux_dense], None
+
+def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1):
+    if rnn_func is None:
+        rnn_func = LSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
+    x = GlobalMaxPool1D()(x)
+    x = Dropout(dropout)(x)
+    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(x)
+    x = Dense(hidden_dense, activation='relu')(x)
+    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return [x, aux_dense], None
+
+def RNN_dropout_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_embed=0.5):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    vals = []
+    x = Dropout(dropout_embed, noise_shape=(None, 1, int(x.shape[-1])))(x)
+    for i, rnn_size in enumerate(hidden_rnn):
+        if i > 0:
+            x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+#    x = Dense(int(hidden_dense), activation='relu')(x)
+#    x = Dropout(dropout)(x)
+    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+
 def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
@@ -878,6 +931,11 @@ def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, 
     if len(hidden_rnn) != no_rnn_layers:
         raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
     vals = []
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+
     for rnn_size in hidden_rnn:
         x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
@@ -951,3 +1009,33 @@ def CNN_shallow_1d(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5):
     x = Dropout(rate=dropout)(x)
     x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
+
+def roc_auc_score(y_true, y_pred):
+    """ ROC AUC Score.
+    Approximates the Area Under Curve score, using approximation based on
+    the Wilcoxon-Mann-Whitney U statistic.
+    Yan, L., Dodier, R., Mozer, M. C., & Wolniewicz, R. (2003).
+    Optimizing Classifier Performance via an Approximation to the Wilcoxon-Mann-Whitney Statistic.
+    Measures overall performance for a full range of threshold levels.
+    Arguments:
+        y_pred: `Tensor`. Predicted values.
+        y_true: `Tensor` . Targets (labels), a probability distribution.
+    """
+    with tf.name_scope("RocAucScore"):
+
+        pos = tf.boolean_mask(y_pred, tf.cast(y_true, tf.bool))
+        neg = tf.boolean_mask(y_pred, ~tf.cast(y_true, tf.bool))
+
+        pos = tf.expand_dims(pos, 0)
+        neg = tf.expand_dims(neg, 1)
+
+        # original paper suggests performance is robust to exact parameter choice
+        gamma = 0.2
+        p     = 3
+
+        difference = tf.zeros_like(pos * neg) + pos - neg - gamma
+
+        masked = tf.boolean_mask(difference, difference < 0.0)
+
+        return tf.reduce_sum(tf.pow(-masked, p))
+

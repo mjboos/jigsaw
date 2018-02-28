@@ -53,14 +53,29 @@ def write_model(predictions, correct=None,
     submission.to_csv('../submissions/submission_{}.csv'.format(timestr), index=False)
 
 def logit(x):
-    if x == 1.:
-        x -= np.finfo(np.float32).eps
-    elif x == 0.:
-        x += np.finfo(np.float32).eps
+    x[x==1.] -= np.finfo(np.float32).eps
+    x[x==0.] += np.finfo(np.float32).eps
     return np.log(x/(1-x))
+
+def cross_val_score_with_estimators(classifier_func, X, y, cv=6, scoring=None):
+    from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import KFold
+    if scoring is None:
+        scoring = roc_auc_score
+    kfold = KFold(n_splits=cv, shuffle=False)
+    estimators = []
+    scores = []
+    for train, test in kfold.split(X):
+        clf = classifier_func().fit(X[train], y[train])
+        scores.append(scoring(y[test], clf.predict_proba(X[test])[:,1]))
+        estimators.append(clf)
+    return scores, estimators
 
 def sparse_to_dense(X):
     return X.toarray()
+
+def predict_proba_conc(estimator, X):
+    return np.concatenate([preds[:,1][:,None] for preds in estimator.predict_proba(X)], axis=-1)
 
 @memory.cache
 def get_glove_embedding(glove_path):
@@ -84,6 +99,13 @@ def get_fasttext_embedding(fasttext_path):
             coefs = np.asarray(values[1:], dtype='float32')
             embeddings_index[word] = coefs
     return embeddings_index
+
+def get_model_specs(model_name):
+    import json
+    with open('../model_specs/{}.json'.format(model_name), 'r') as fl:
+        modelspecs = fl.read()
+    modelspecs_dict = json.reads(modelspecs)
+    return modelspecs_dict
 
 def predictions_for_language(language_dict, test_data=None):
     '''Expects a language_dict, where the keys correspond to languages and the values to models that implement fit'''

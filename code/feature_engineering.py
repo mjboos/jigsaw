@@ -14,9 +14,47 @@ import re, string
 from sklearn.base import BaseEstimator, TransformerMixin
 import string
 import langid
+import preprocessing as pre
+
+bad_word_dict = joblib.load('bad_words_misspellings.pkl')
+some_bad_words = joblib.load('some_bad_words.pkl')
+
+some_bad_words2 = [u'bastard',
+ u'jerk',
+ u'moron',
+ u'idiot',
+ u'retard',
+ u'assfucker',
+ u'arsehole',
+ u'nazi',
+ u'assfuck',
+ u'fuckhead',
+ u'fuckwit',
+ u'cocksucker',
+ u'asshole',
+ u'bullshit',
+ u'motherfucker',
+ u'fucked',
+ u'shit',
+ u'fuck',
+ u'fucking',
+ u'gay',
+ u'fag',
+ u'faggot',
+ u'bitch',
+ u'whore',
+ u'fucker',
+ u'nigg',
+ u'nigger']
+
+some_bad_words = list(set(some_bad_words+some_bad_words2))
+
 
 eng_stopwords = set(stopwords.words("english"))
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
+
+with open('bad-words.txt', 'r') as fl:
+    other_bad_words = fl.readlines()
 
 def count_symbol(row, symbol='!'):
     return row.count(symbol)
@@ -36,15 +74,27 @@ def proportion_unique_words(row):
 def language_identity(row):
     return langid.classify(row)[0]
 
+bad_word_regex = '(' + '|'.join([r'\b'+bw+r'\b' for bw in some_bad_words])+')'
+
+def contains_bad_word(row):
+    match = re.search(bad_word_regex, row)
+    return match is not None
+
+bad_word_regex2 = '(' + '|'.join(some_bad_words+list(np.unique(bad_word_dict.keys())))+')'
+
+def contains_bad_word2(row):
+    match = re.search(bad_word_regex2, row)
+    return match is not None
+
 feature_mapping_dict = {
         'count_symbol' : count_symbol,
+        'bad_word' : contains_bad_word,
+        'bad_word2' : contains_bad_word2,
         'count_capitals' : count_capitals,
         'proportion_capitals' : proportion_capitals,
         'num_unique_words' : num_unique_words,
-        'proportion_unique_words' : proportion_unique_words,
-        'language' : language_identity}
+        'proportion_unique_words' : proportion_unique_words}
 
-@memory.cache
 def compute_features(text_df, which_features=None):
     if which_features:
         feature_funcs = [feature_mapping_dict[feature_name] for feature_name in which_features]

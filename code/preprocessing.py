@@ -44,6 +44,38 @@ control_char_re = re.compile('[%s]' % re.escape(control_chars))
 bad_word_dict = joblib.load('bad_words_misspellings.pkl')
 some_bad_words = joblib.load('some_bad_words.pkl')
 
+some_bad_words2 = [u'bastard',
+ u'jerk',
+ u'moron',
+ u'idiot',
+ u'retard',
+ u'assfucker',
+ u'arsehole',
+ u'nazi',
+ u'assfuck',
+ u'fuckhead',
+ u'fuckwit',
+ u'cocksucker',
+ u'asshole',
+ u'bullshit',
+ u'motherfucker',
+ u'fucked',
+ u'shit',
+ u'fuck',
+ u'fucking',
+ u'gay',
+ u'fag',
+ u'faggot',
+ u'bitch',
+ u'whore',
+ u'fucker',
+ u'nigg',
+ u'nigger']
+
+some_bad_words = list(set(some_bad_words+some_bad_words2))
+
+wikipedia_indicators = [r'\(diff \| hist\)', 'User talk', r'\(current\)']
+
 def check_for_duplicates(word, zero_words):
     regex = r'^' + ''.join('[{}]+'.format(c) for c in word) + '$'
     matches = [re.search(regex, s) for s in zero_words]
@@ -73,10 +105,8 @@ def clean_comment(text, replace_misspellings=False):
     s = re.sub(r"\'d", " would ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'ll", " will ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'scuse", " excuse ", s, flags=re.IGNORECASE)
-    s = re.sub(r'([_])', r' \1 ', s)
     s = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', ' _ip_ ', s)
     s = re.sub(r'\b[a-z]+\d+\b', ' _user_ ', s)
-    s = re.sub(r'\b[0-9]+\b', ' _number_ ', s)
 
     #hard coded replacements
     for bad_word in some_bad_words:
@@ -87,15 +117,19 @@ def clean_comment(text, replace_misspellings=False):
     s = re.sub(r'\bfukk\b', ' fuck ', s)
     s = re.sub(r'\bfukker\b', ' fuck ', s)
     s = re.sub(r'\bfucka\b', ' fucker ', s)
+    s = re.sub(r'\bcrackaa\b', ' cracker ', s)
 
     #wikipedia specific features
 #    wikipedia_regex = [r'\(talk\)', r'\(utc\)', r'\(talk|email\)']
 #    wikipedia_matches = [re.search(regex, s) for regex in wikipedia_regex]
     s = re.sub(r'(?<=\(talk\)).*?(?=\(utc\))', ' _date_ ', s)
-    s = re.sub(r'\(talk\)', ' _wikipedia ', s)
+    s = re.sub(r'\d\d:\d\d, \d+ (?:January|February|March|April|May|June|July|August|September|November|December) \d+', ' _date_ ', s)
+    s = re.sub(r'\(talk\)', ' _talk_ ', s)
+    s = re.sub(r'user talk', ' _talk2_ ', s)
     s = re.sub(r'\(utc\)', ' _wikipedia_ ', s)
     s = re.sub(r'\(talk|email\)', ' _wikipedia_ ', s)
 
+#    s = re.sub(r'\b[0-9]+\b', ' _number_ ', s)
     s = re.sub(ur'(?:https?://|www\.)(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', ' _url_ ', s)
     s = re.sub(ur'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', ' _mail_ ', s)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
@@ -112,8 +146,9 @@ def clean_comment(text, replace_misspellings=False):
             s = re.sub(r'\b{}\b'.format(key.lower()), ' '+val.lower()+' ', s)
     return s.encode('utf-8')
 
-def data_preprocessing(df, replace_misspellings=False):
-    df['comment_text'].fillna(' ', inplace=True)
+@memory.cache
+def data_preprocessing(df, replace_misspellings=True):
+    df['comment_text'].fillna('', inplace=True)
     clean_comment_dummy = partial(clean_comment, replace_misspellings=replace_misspellings)
     df['comment_text'] = df['comment_text'].apply(clean_comment_dummy)
     return df
