@@ -91,7 +91,7 @@ def freeze_layers(model, unfrozen_types=[], unfrozen_keyword=None):
 
 def continue_training_DNN_one_output(model_name, i, weights, fit_args, *args, **kwargs):
     best_weights_path="{}_best.hdf5".format(model_name)
-    model = models.Embedding_Blanko_DNN(**kwargs)
+    model = models.Embedding_Blanko_DNN(n_out=1, **kwargs)
     transfer_weights_multi_to_one(weights, model.model, i)
     callbacks_list = make_callback_list(model_name, patience=5)
     model.model = freeze_layers(model.model, unfrozen_keyword='main_output')

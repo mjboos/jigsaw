@@ -371,7 +371,7 @@ class EmbeddingSemiTrainable(Layer):
         return (input_shape[0], input_length, self.output_dim)
 
 class Embedding_Blanko_DNN(BaseEstimator):
-    def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None,
+    def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None, n_out=6,
             maxlen=300, embedding_dim=300, trainable=False, prune=True, augment_data=False, list_of_tokens=None,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
@@ -381,6 +381,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
         self.embedding_dim = embedding_dim
         # test for embedding
         self.prune = prune
+        self.n_out = n_out
         self.embedding_args = embedding_args
         self.augment_data = augment_data
 
@@ -413,7 +414,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
                     trainable=self.trainable)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
             embedded_sequences = embedding_layer(sequence_input)
-            outputs, aux_input = self.model_function(embedded_sequences)
+            outputs, aux_input = self.model_function(embedded_sequences, n_out=self.n_out)
             if aux_input is not None:
                 inputs = [sequence_input, aux_input]
             else:
@@ -434,7 +435,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
 
             embedded_sequences = embedding_layer(sequence_input)
-            outputs, aux_input = self.model_function(embedded_sequences)
+            outputs, aux_input = self.model_function(embedded_sequences, n_out=self.n_out)
             if aux_input:
                 inputs = [sequence_input, aux_input]
             else:
@@ -497,27 +498,27 @@ def CNN_model(x):
     x = Dense(6, activation="sigmoid")(x)
     return x
 
-def LSTM_larger_dense_dropout_model(x):
+def LSTM_larger_dense_dropout_model(x,n_out=6):
     x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
     x = GlobalMaxPool1D()(x)
     x = Dropout(0.5)(x)
     x = Dense(40, activation="relu")(x)
     x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
+    x = Dense(n_out, activation="sigmoid")(x)
     return x
 
 
-def LSTM_twice_dropout_model(x):
+def LSTM_twice_dropout_model(x,n_out=6):
     x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
     x = Bidirectional(LSTM(64, return_sequences=True, dropout=0.5))(x)
     x = GlobalMaxPool1D()(x)
     x = Dropout(0.5)(x)
     x = Dense(32, activation="relu")(x)
     x = Dropout(0.5)(x)
-    x = Dense(6, activation="sigmoid")(x)
+    x = Dense(n_out, activation="sigmoid")(x)
     return x
 
-def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=64, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1):
+def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=64, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNGRU
     if not isinstance(hidden_rnn, list):
@@ -559,7 +560,7 @@ def RNN_aux_loss_skip(x, no_rnn_layers=2, hidden_rnn=64, hidden_dense=48, rnn_fu
     x = Dense(5, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
-def RNN_aux_aug(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1):
+def RNN_aux_aug(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1,n_out=6):
     if rnn_func is None:
         rnn_func = LSTM
     if not isinstance(hidden_rnn, list):
@@ -578,10 +579,10 @@ def RNN_aux_aug(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=Non
     x = Dropout(dropout)(x)
     x = Dense(hidden_dense, activation='relu')(x)
     x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
-def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.8, input_len=500):
+def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.8, input_len=500,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -601,7 +602,7 @@ def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fu
     x = Dense(5, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_attention_1d(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500):
+def RNN_attention_1d(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -622,7 +623,7 @@ def RNN_attention_1d(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fun
     x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_one_gru_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_one_gru_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -643,11 +644,11 @@ def RNN_one_gru_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rn
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout_dense)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
 
-def RNN_diff_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_diff_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -673,10 +674,10 @@ def RNN_diff_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_f
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout_dense)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -702,10 +703,10 @@ def RNN_channel_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dens
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout_dense)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_time_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_time_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_embed=0.2, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -730,11 +731,11 @@ def RNN_time_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=4
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout_dense)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
 
-def RNN_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -759,10 +760,10 @@ def RNN_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rn
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout_dense)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False):
+def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -786,10 +787,10 @@ def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=N
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout_dense)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_aug_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, input_len=500):
+def RNN_aug_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, input_len=500,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -811,10 +812,10 @@ def RNN_aug_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fu
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, aug_input
 
-def RNN_general_skip(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+def RNN_general_skip(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -832,10 +833,10 @@ def RNN_general_skip(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fun
 #    x = BatchNormalization(x)
     x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_augment(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, input_len=500):
+def RNN_augment(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, input_len=500,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNGRU
     if not isinstance(hidden_rnn, list):
@@ -855,10 +856,10 @@ def RNN_augment(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=Non
 #    x = BatchNormalization(x)
     x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, aug_input
 
-def RNN_conc_aux(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1):
+def RNN_conc_aux(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -879,10 +880,10 @@ def RNN_conc_aux(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=No
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
 #    x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
-def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1):
+def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=None, dropout=0.5, aux_dim=1,n_out=6):
     if rnn_func is None:
         rnn_func = LSTM
     if not isinstance(hidden_rnn, list):
@@ -897,10 +898,10 @@ def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=No
     aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(x)
     x = Dense(hidden_dense, activation='relu')(x)
     x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
-def RNN_dropout_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_embed=0.5):
+def RNN_dropout_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_embed=0.5,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -919,11 +920,11 @@ def RNN_dropout_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fun
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
 #    x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
 
-def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -945,10 +946,10 @@ def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, 
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
 #    x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_general(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+def RNN_general(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -963,10 +964,10 @@ def RNN_general(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=Non
 #    x = BatchNormalization(x)
     x = Dense(int(hidden_dense), activation='relu')(x)
     x = Dropout(dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_general_one_class(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5):
+def RNN_general_one_class(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -984,7 +985,7 @@ def RNN_general_one_class(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rn
     x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def CNN_shallow(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5):
+def CNN_shallow(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5,n_out=6):
     outputs = []
     for kernel_size in kernel_sizes:
         output_i = Conv1D(n_filters, kernel_size=kernel_size,
@@ -994,10 +995,10 @@ def CNN_shallow(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5):
         outputs.append(output_i)
     x = concatenate(outputs, axis=1)
     x = Dropout(rate=dropout)(x)
-    x = Dense(6, activation="sigmoid", name='main_output')(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def CNN_shallow_1d(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5):
+def CNN_shallow_1d(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5,n_out=6):
     outputs = []
     for kernel_size in kernel_sizes:
         output_i = Conv1D(n_filters, kernel_size=kernel_size,

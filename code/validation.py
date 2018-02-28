@@ -26,7 +26,7 @@ import copy
 import mkl
 mkl.set_num_threads(2)
 
-def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None):
+def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None, finetune=False):
     '''Builds and evaluates a CNN on train_text, train_labels'''
     new_dict = {key:val for key, val in fixed_args.items()}
     new_dict.update(kwargs)
@@ -41,6 +41,9 @@ def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None
     has_loss_func = (not isinstance(new_dict['compilation_args']['loss']['main_output'], str)) and new_dict['compilation_args']['loss']['main_output'].__name__ == 'tmp_func'
     if has_loss_func:
         loss_func = new_dict['compilation_args']['loss']['main_output']
+    if finetune:
+        sub_predictions_list = []
+        sub_scores_list = []
     for train, test in kfold.split(Xs):
         new_dict['compilation_args']['optimizer'] = opt(**optargs)
         if has_loss_func:
@@ -60,10 +63,28 @@ def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None
         predictions.append(preds)
         scores.append(roc_auc_score(test_y['main_output'], predictions[-1]))
         joblib.dump(scores, '../scores/{}.pkl'.format(model_name))
+        if finetune:
+            weights = [layer.get_weights() for layer in estimator.model.layers]
+            sub_predictions = []
+            sub_scores = []
+            for i in xrange(6):
+                K.clear_session()
+                estimator_subname = model_time+'_finetune_{}'.format(i)
+                new_dict['compilation_args']['optimizer'] = opt(**optargs)
+                estimator_sub = DNN.continue_training_DNN_one_output(estimator_subname, i, weights, fit_args, train_x, train_y[:,i], **new_dict)
+                sub_predictions.append(np.squeeze(estimator_sub.predict(test_x))[:,None])
+                sub_scores.append(roc_auc_score(test_y['main_output'][:,i],sub_predictions[-1]))
+            sub_predictions_list.append(np.concatenate(sub_predictions, axis=-1))
+            sub_scores_list.append(sub_scores)
         K.clear_session()
     predictions = np.vstack(predictions)
     score_dict = {'loss' : roc_auc_score(y['main_output'], predictions), 'loss_fold' : scores, 'mean_loss':np.mean(scores), 'status' : STATUS_OK}
-    predictions = np.vstack(predictions)
+    if finetune:
+        sub_predictions_list = np.vstack(sub_predictions_list)
+        score_dict['loss_plain'] = score_dict['loss']
+        score_dict['loss'] = roc_auc_score(y['main_output'], sub_predictions_list)
+        score_dict['loss_fold_finetuned'] = sub_scores_list
+        joblib.dump(sub_predictions_list, '../predictions/finetuned_{}.pkl'.format(model_name), compress=3)
     joblib.dump(predictions, '../predictions/{}.pkl'.format(model_name), compress=3)
     joblib.dump(score_dict, '../scores/{}.pkl'.format(model_name))
     return score_dict
