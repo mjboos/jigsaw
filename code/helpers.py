@@ -40,6 +40,14 @@ def get_class_weights(y_mat, smooth_factor=0.):
 def rank(arr):
     return arr.argsort().argsort()
 
+def split_to_norm_rank(predictions, cols=True, cv=6):
+    from sklearn.model_selection import KFold
+    kf = KFold(n_splits=cv)
+    ranked_predictions = []
+    for train, test in kf.split(predictions):
+        ranked_predictions.append(preds_to_norm_rank(predictions[test], cols=cols))
+    return np.vstack(ranked_predictions)
+
 def preds_to_norm_rank(predictions, cols=True):
     all_cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     if cols is None:
