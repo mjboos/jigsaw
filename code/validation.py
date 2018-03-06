@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 from __future__ import division
+import matplotlib
+matplotlib.use('agg')
 import numpy as np
 import pandas as pd
 from functools import partial
@@ -71,7 +73,9 @@ def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None
                 K.clear_session()
                 estimator_subname = model_time+'_finetune_{}'.format(i)
                 new_dict['compilation_args']['optimizer'] = opt(**optargs)
-                estimator_sub = DNN.continue_training_DNN_one_output(estimator_subname, i, weights, fit_args, train_x, train_y[:,i], **new_dict)
+                sub_y = { key : val for key, val in train_y.iteritems()}
+                sub_y['main_output'] = sub_y['main_output'][:,i]
+                estimator_sub = DNN.continue_training_DNN_one_output(estimator_subname, i, weights, fit_args, train_x, sub_y, **new_dict)
                 sub_predictions.append(np.squeeze(estimator_sub.predict(test_x))[:,None])
                 sub_scores.append(roc_auc_score(test_y['main_output'][:,i],sub_predictions[-1]))
             sub_predictions_list.append(np.concatenate(sub_predictions, axis=-1))
@@ -220,7 +224,7 @@ def make_loss_function(class_weights):
 def test_models():
     fit_args = {'batch_size' : 80, 'epochs' : 30,
                       'validation_split' : 0.2}
-    fixed_args = DNN.simple_huge_dropout_net()
+    fixed_args = DNN.simple_huge_net()
     kwargs = {}
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
@@ -235,26 +239,26 @@ def test_models():
 #    embedding = hlp.get_glove_embedding('../glove.twitter.27B.200d.txt')
     kwargs['embedding'] = embedding
     kwargs['tokenizer'] = frozen_tokenizer
-    DNN_model_validate({'main_input':train_text}, {'main_output':train_y, 'aux_output':aux_task}, fit_args, fixed_args, kwargs, cv=6, model_name='huge_channel_2_dropout')
+    DNN_model_validate({'main_input':train_text}, {'main_output':train_y, 'aux_output':aux_task}, fit_args, fixed_args, kwargs, cv=6, model_name='huge_finetune', finetune=True)
 
-def make_average_general_test_set_predictions(model_name):
+def make_average_general_test_set_predictions(model_name, rank_avg=True):
     import glob
     estimators = joblib.load('../models/{}.pkl'.format(model_name))
     test_text, _ = pre.load_data('test.csv')
     tfidf = models.get_tfidf_model()
     test_tfidf = tfidf.transform(test_text)
-    predictions = np.concatenate([hlp.predict_proba_conc(estimator, test_tfidf)[...,None] for estimator in estimators], axis=-1).mean(axis=-1)
+    predictions = np.concatenate([hlp.preds_to_norm_rank(hlp.predict_proba_conc(estimator, test_tfidf), cols=rank_avg)[...,None] for estimator in estimators], axis=-1).mean(axis=-1)
     joblib.dump(predictions, '../predictions/test_set_{}.pkl'.format(model_name))
     hlp.write_model(predictions)
 
-def make_average_test_set_predictions(model_name):
+def make_average_test_set_predictions(model_name, **kwargs):
     import os
     if os.path.exists('../models/{}.pkl'.format(model_name)):
-        make_average_general_test_set_predictions(model_name)
+        make_average_general_test_set_predictions(model_name, **kwargs)
     else:
-        make_average_DNN_test_set_predictions(model_name)
+        make_average_DNN_test_set_predictions(model_name, **kwargs)
 
-def make_average_DNN_test_set_predictions(model_name):
+def make_average_DNN_test_set_predictions(model_name, rank_avg=True):
     import glob
     all_model_names = [mname for mname in glob.glob(model_name + '*')]
 #    fixed_args = DNN.old_gru_net()
@@ -272,12 +276,17 @@ def make_average_DNN_test_set_predictions(model_name):
     prediction_list = []
     model = DNN.load_full_model(all_model_names[0].split('_best')[0], embedding=embedding, tokenizer=frozen_tokenizer, **fixed_args)
     prediction_list.append(model.predict(test_text)[..., None])
+
+    train_preds = []
     for submodel_name in all_model_names[1:]:
         model.model.load_weights(submodel_name)
-        prediction_list.append(model.predict(test_text)[..., None])
+        prediction_list.append(hlp.preds_to_norm_rank(model.predict(test_text), cols=rank_avg)[..., None])
+        train_preds.append(hlp.preds_to_norm_rank(model.predict(train_text), cols=rank_avg)[..., None])
     predictions = np.concatenate(prediction_list, axis=-1)
     predictions = predictions.mean(axis=-1)
+    train_preds = np.concatenate(train_preds, axis=-1).mean(axis=-1)
     joblib.dump(predictions, '../predictions/test_set_{}.pkl'.format(model_name))
+    joblib.dump(train_preds, '../predictions/train_set_avg_{}.pkl'.format(model_name))
     hlp.write_model(predictions)
 
 def report_ensembling(model_name_list, ensemble_name='generic'):
@@ -306,7 +315,7 @@ def stack_ensembling(predictions_col_dict, clf_func, train_y):
     return estimator_list, score_list
 #        gbr = GradientBoostingClassifier(n_estimators=50)
 
-def test_meta_models(model_name_list, meta_features=None):
+def test_meta_models(model_name_list, meta_features=None, rank=True):
     from scipy.special import logit, expit
     from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier
     from sklearn.linear_model import LogisticRegressionCV
@@ -318,7 +327,8 @@ def test_meta_models(model_name_list, meta_features=None):
 #                       'gbc' : partial(GridSearchCV, GradientBoostingClassifier(), {'n_estimators' : [30], 'max_depth' : [2, 3]})}
 
     _, train_y = pre.load_data()
-    prediction_dict = {model_name : joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
+    prediction_dict = {model_name :joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
+    prediction_dict = {key:hlp.preds_to_norm_rank(val, rank) for key, val in prediction_dict.iteritems()}
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions_col_dict = {}
     for i, col in enumerate(cols):
@@ -335,29 +345,32 @@ def find_weighted_average(model_preds, train_y):
     from scipy.optimize import minimize
     from sklearn.metrics import roc_auc_score
     start_pos = np.ones((model_preds.shape[-1],))/model_preds.shape[-1]
-    cons = ({'type' : 'eq', 'fun' : lambda x : 1-np.sum(x)})
-    bounds = [(0,1)]*model_preds.shape[-1]
-    res = minimize(lambda x : -roc_auc_score(train_y, model_preds.dot(x)), start_pos, method='SLSQP', bounds=bounds, constraints=cons, options={'ftol':'1e-11'})
+#    cons = ({'type' : 'eq', 'fun' : lambda x : 1-np.sum(x)})
+#    bounds = [(0,1)]*model_preds.shape[-1]
+    res = minimize(lambda x : -roc_auc_score(train_y, model_preds.dot(x)), start_pos)#, method='SLSQP', bounds=bounds, constraints=cons, options={'ftol':'1e-11'})
     return res
 
-def apply_meta_models(estimator_dict, model_name_list, meta_features=None):
+def apply_meta_models(estimator_dict, model_name_list, meta_features=None, rank=True, rank_cv=False):
     '''same order necessary for estimator_dict and test_predictions'''
     from scipy.special import logit, expit
     model_name_list = sorted(model_name_list)
     prediction_dict = {}
     for model_name in model_name_list:
         try:
-            prediction_dict[model_name] = joblib.load('../predictions/test_set_{}.pkl'.format(model_name))
+            prediction_dict[model_name] = hlp.preds_to_norm_rank(joblib.load('../predictions/test_set_{}.pkl'.format(model_name)), rank)
         except IOError:
             make_average_test_set_predictions(model_name)
-            prediction_dict[model_name] = joblib.load('../predictions/test_set_{}.pkl'.format(model_name))
+            prediction_dict[model_name] = hlp.preds_to_norm_rank(joblib.load('../predictions/test_set_{}.pkl'.format(model_name)), rank)
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions_test = []
     for i, col in enumerate(cols):
         pred_col = np.hstack([hlp.logit(prediction_dict[model_name][:,i])[:,None] for model_name in sorted(prediction_dict.keys())])
         if meta_features is not None:
             pred_col = np.hstack([pred_col, meta_features])
-        predictions_test.append(np.concatenate([est.predict_proba(pred_col)[:,1][:,None] for est in estimator_dict[col]], axis=-1).mean(axis=-1)[:,None])
+        if rank_cv:
+            predictions_test.append(np.concatenate([hlp.norm_rank(est.predict_proba(pred_col)[:,1])[:,None] for est in estimator_dict[col]], axis=-1).mean(axis=-1)[:,None])
+        else:
+            predictions_test.append(np.concatenate([est.predict_proba(pred_col)[:,1][:,None] for est in estimator_dict[col]], axis=-1).mean(axis=-1)[:,None])
     predictions_test = np.concatenate(predictions_test, axis=-1)
     hlp.write_model(predictions_test)
 

@@ -89,12 +89,27 @@ def replacement_regex(word):
 def remove_control_chars(s):
     return control_char_re.sub('', s)
 
-def clean_comment(text, replace_misspellings=False):
+def replace_specific_patterns(s):
+    s = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', ' _ip_ ', s)
+    s = re.sub(r'\b[a-z]+\d+\b', ' _user_ ', s)
+    s = re.sub(r'(?<=\(talk\)).*?(?=\(utc\))', ' _date_ ', s)
+    s = re.sub(r'\d\d:\d\d, \d+ (?:January|February|March|April|May|June|July|August|September|November|December) \d+', ' _date_ ', s)
+#    s = re.sub(r'\(talk\)', ' _talk_ ', s)
+#    s = re.sub(r'user talk', ' _talk_ ', s)
+#    s = re.sub(r'\(utc\)', ' _wikipedia_ ', s)
+#    s = re.sub(r'\(talk|email\)', ' _wikipedia_ ', s)
+#    s = re.sub(r'\b[0-9]+\b', ' _number_ ', s)
+    s = re.sub(ur'(?:https?://|www\.)(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', ' _url_ ', s)
+    s = re.sub(ur'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', ' _mail_ ', s)
+    return s, ['_ip_', '_user_', '_date_', '_number_', '_url_', '_mail_']
+
+
+def clean_comment(text, replace_misspellings=True):
     import unicodedata as ud
     text = ud.normalize('NFD', text.encode('utf-8').decode('utf-8'))
     text = text.lower()
     text = re.sub(r'[^\x00-\x7f]', r' ' , text)
-    text = re.sub(r'[\n\r]', r' ', text)
+#    text = re.sub(r'[\n\r]', r' ', text)
     s = re.sub(r"what's", "what is ", text, flags=re.IGNORECASE)
     s = re.sub(r"\'s", " ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'ve", " have ", s, flags=re.IGNORECASE)
@@ -105,9 +120,6 @@ def clean_comment(text, replace_misspellings=False):
     s = re.sub(r"\'d", " would ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'ll", " will ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'scuse", " excuse ", s, flags=re.IGNORECASE)
-    s = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', ' _ip_ ', s)
-    s = re.sub(r'\b[a-z]+\d+\b', ' _user_ ', s)
-
     #hard coded replacements
     for bad_word in some_bad_words:
         s = re.sub(replacement_regex(bad_word), ' ' + bad_word + ' ', s)
@@ -122,19 +134,11 @@ def clean_comment(text, replace_misspellings=False):
     #wikipedia specific features
 #    wikipedia_regex = [r'\(talk\)', r'\(utc\)', r'\(talk|email\)']
 #    wikipedia_matches = [re.search(regex, s) for regex in wikipedia_regex]
-    s = re.sub(r'(?<=\(talk\)).*?(?=\(utc\))', ' _date_ ', s)
-    s = re.sub(r'\d\d:\d\d, \d+ (?:January|February|March|April|May|June|July|August|September|November|December) \d+', ' _date_ ', s)
-    s = re.sub(r'\(talk\)', ' _talk_ ', s)
-    s = re.sub(r'user talk', ' _talk2_ ', s)
-    s = re.sub(r'\(utc\)', ' _wikipedia_ ', s)
-    s = re.sub(r'\(talk|email\)', ' _wikipedia_ ', s)
-
-#    s = re.sub(r'\b[0-9]+\b', ' _number_ ', s)
-    s = re.sub(ur'(?:https?://|www\.)(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', ' _url_ ', s)
-    s = re.sub(ur'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', ' _mail_ ', s)
     #without_controls = ' '.join(control_char_re.sub(' ', text).split(' '))
     # add space between punctuation
 
+    s, patterns = replace_specific_patterns(s)
+    s = ' '.join([re.sub(r'([_])', ' ', sub_s) if sub_s not in patterns else sub_s for sub_s in s.split(' ')])
     #shorten words
     s = re.sub(r'(\w)\1\1+', r' \1\1 ', s)
 

@@ -93,7 +93,7 @@ def continue_training_DNN_one_output(model_name, i, weights, fit_args, *args, **
     best_weights_path="{}_best.hdf5".format(model_name)
     model = models.Embedding_Blanko_DNN(n_out=1, **kwargs)
     transfer_weights_multi_to_one(weights, model.model, i)
-    callbacks_list = make_callback_list(model_name, patience=5)
+    callbacks_list = make_callback_list(model_name, patience=3)
     model.model = freeze_layers(model.model, unfrozen_keyword='main_output')
     fit_args['callbacks'] = callbacks_list
     model.fit(*args, **fit_args)
@@ -278,12 +278,20 @@ def simple_huge_aux_net(trainable=False, prune=True):
         'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy', 'aux_output' : 'binary_crossentropy'}, 'loss_weights' : {'main_output':1., 'aux_output' : 0.1}}}
     return model_params
 
-def simple_huge_net(trainable=False, prune=True):
-    model_func = partial(models.RNN_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96)
+def simple_huge_1_layer_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
         'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+    return model_params
+
+def simple_huge_net(trainable=False, prune=True):
+    model_func = partial(models.RNN_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=None)
+    model_params = {
+        'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
+        'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1., 'clipvalue':1., 'beta_2':0.99}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def simple_huge_dropout_net(trainable=False, prune=True):

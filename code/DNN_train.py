@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 from __future__ import division
+import matplotlib
+matplotlib.use('agg')
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -50,9 +52,9 @@ if __name__=='__main__':
     weight_tensor = tf.convert_to_tensor(class_weights, dtype=tf.float32)
     loss = partial(models.weighted_binary_crossentropy, weights=weight_tensor)
     loss.__name__ = 'weighted_binary_crossentropy'
-    model_params = simple_huge_aux_net(prune=True)
+    model_params = simple_huge_net(prune=True)
 #    model_params['compilation_args']['loss']['main_output'] = models.roc_auc_score
-    model_name = '300_fasttext_aux_conc_GRU'
+    model_name = 'no_clipping'
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
 #    list_of_tokens = frozen_tokenizer.tokenizer.texts_to_sequences(pd.concat([train_text, test_text]))
@@ -60,25 +62,25 @@ if __name__=='__main__':
     opt = model_params['compilation_args'].pop('optimizer_func')
     optargs = model_params['compilation_args'].pop('optimizer_args')
     optargs['lr'] = 0.0005
-    model_params['compilation_args']['optimizer'] = opt(beta_2=0.99, **optargs)
+    model_params['compilation_args']['optimizer'] = opt(**optargs)
 #    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output': train_y, 'aux_output' : aux_task}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    hlp.write_model(model.predict({'main_input':test_text})[0])
 #    hlp.make_training_set_preds(model, {'main_input':train_text}, train_y)
 
-#    model = models.Embedding_Blanko_DNN(tokenizer=frozen_tokenizer, embedding=embedding, **model_params)
+    model = models.Embedding_Blanko_DNN(tokenizer=frozen_tokenizer, embedding=embedding, **model_params)
 #    old_model.load_weights(model_name+'_best.hdf5')
-#    lrfinder = lrf.LRFinder(model.model)
-#    train_x = frozen_tokenizer.transform(train_text)
-#    lrfinder.find(train_x, train_y, 0.0001, 0.01, batch_size=80, epochs=1)
+    lrfinder = lrf.LRFinder(model.model)
+    train_x = frozen_tokenizer.transform(train_text)
+    lrfinder.find(train_x, train_y, 0.001, 0.05, batch_size=80, epochs=1)
 #    lrfinder.losses = [np.log(loss) for loss in lrfinder.losses]
-#    lrfinder.plot_loss()
-#    plt.savefig('losses_aux.svg')
-#    plt.close()
-#    lrfinder.plot_loss_change()
-#    plt.savefig('loss_change_aux.svg')
-#    plt.close()
-#    joblib.dump([lrfinder.losses, lrfinder.lrs], 'lrfinder_aux.pkl')
+    joblib.dump([lrfinder.losses, lrfinder.lrs], '{}.pkl'.format(model_name))
+    lrfinder.plot_loss()
+    plt.savefig('loss_{}.svg'.format(model_name))
+    plt.close()
+    lrfinder.plot_loss_change()
+    plt.savefig('loss_change_{}.svg'.format(model_name))
+    plt.close()
 
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
     # SHUFFLE TRAINING SET so validation split is different every time

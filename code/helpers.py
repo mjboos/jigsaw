@@ -37,6 +37,22 @@ def get_class_weights(y_mat, smooth_factor=0.):
         mat_counts += p
     return mat_counts.max() / mat_counts
 
+def rank(arr):
+    return arr.argsort().argsort()
+
+def preds_to_norm_rank(predictions, cols=True):
+    all_cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    if cols is None:
+        return predictions
+    elif cols is True:
+        cols = all_cols
+    which_cols = np.array([i for i,col in enumerate(all_cols) if col in cols])
+    return np.concatenate([norm_rank(preds)[:,None] if i in which_cols else preds[:,None] for i, preds in enumerate(predictions.T)], axis=-1)
+
+def norm_rank(arr):
+    from sklearn.preprocessing import minmax_scale
+    return minmax_scale(rank(arr))
+
 def make_weight_matrix(y_mat, weights):
     return np.tile(weights[None], (y_mat.shape[0], 1))
 

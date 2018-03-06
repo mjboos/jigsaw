@@ -213,10 +213,9 @@ def prune_matrix_and_tokenizer(embedding_matrix, tokenizer, replace_words=True,
                                meta_features=True, list_of_tokens=None, debug=False):
     '''Prunes the embedding matrix and tokenizer by replacing all words corresponding to zero vectors (in embedding matrix) with an id for unknown word.
     This id is the number of known words + 1.'''
-    import operator
     import copy
     tokenizer = copy.deepcopy(tokenizer)
-    word_list = which_words_are_zero_vectors(embedding_matrix, tokenizer)
+    word_list = which_words_are_zero_vectors(embedding_matrix, tokenizer, exclude_ids=meta_features if not list_of_tokens else False)
     replace_dict = {}
 
     for word in word_list:
@@ -225,6 +224,7 @@ def prune_matrix_and_tokenizer(embedding_matrix, tokenizer, replace_words=True,
                 token = tokenizer.word_index[word]
                 embedding_matrix[token] = mean_embedding_for_token(token, list_of_tokens, embedding_matrix)
                 continue
+
         tokenizer.word_index.pop(word, None)
         tokenizer.word_docs.pop(word, None)
         tokenizer.word_counts.pop(word, None)
@@ -233,20 +233,27 @@ def prune_matrix_and_tokenizer(embedding_matrix, tokenizer, replace_words=True,
             repl_word = word_to_replace(word)
             if repl_word:
                 replace_dict[word] = repl_word
-    # now reorder ranks
-    ranked_words, _ = zip(*sorted(tokenizer.word_index.items(), key=operator.itemgetter(1)))
-    tokenizer.word_index = {word : rank+1 for rank, word in enumerate(ranked_words)}
+    tokenizer = reorder_tokenizer_rank(tokenizer)
     if replace_words:
         for word, repl_word in replace_dict.iteritems():
             tokenizer.word_index[word] = tokenizer.word_index[repl_word]
         if debug:
             return prune_zero_vectors(embedding_matrix), tokenizer, replace_dict
-    return prune_zero_vectors(embedding_matrix), tokenizer
+    return prune_zero_vectors(embedding_matrix), tokenizer 
+def reorder_tokenizer_rank(tokenizer):
+    # now reorder ranks
+    import operator
+    ranked_words, _ = zip(*sorted(tokenizer.word_index.items(), key=operator.itemgetter(1)))
+    tokenizer.word_index = {word : rank+1 for rank, word in enumerate(ranked_words)}
+    return tokenizer
 
 def prune_zero_vectors(matrix):
     '''prune all zero vectors of matrix except the first and last one (non existent and out of vocabulary vectors)'''
     matrix = matrix[np.array([True] + [vec.any() for vec in matrix[1:-1]] + [True])]
     return matrix
+
+def is_meta_feature(word):
+    return True if word.startswith('_') and word.endswith('_') else False
 
 def which_words_are_zero_vectors(embedding_matrix, tokenizer, exclude_ids=False):
     '''Returns a list of words which are zero vectors (not found) in the embedding matrix'''
@@ -255,8 +262,7 @@ def which_words_are_zero_vectors(embedding_matrix, tokenizer, exclude_ids=False)
         if word == tokenizer.oov_token:
             continue
         if exclude_ids:
-            if word.startswith('_') and word.endswith('_'):
-                DEBUG_cnt += 1
+            if is_meta_feature(word):
                 continue
         if i >= embedding_matrix.shape[0]:
             # word is out of max features
@@ -267,7 +273,7 @@ def which_words_are_zero_vectors(embedding_matrix, tokenizer, exclude_ids=False)
     return word_list
 
 def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200,
-                          embedding_dim=50, meta_features=False, **kwargs):
+                          embedding_dim=50, meta_features=True, **kwargs):
     num_words = min(max_features, len(word_index))
     # add one element for zero vector
     embedding_matrix = np.zeros((num_words+1, embedding_dim))
@@ -281,7 +287,7 @@ def make_embedding_matrix(embedding, word_index, max_features=20000, maxlen=200,
             embedding_matrix[i] = embedding_vector
         # add random activations for meta features
         elif meta_features:
-            if word.startswith('_') and word.endswith('_'):
+            if is_meta_feature(word):
                 embedding_matrix[i] = np.random.uniform(-1, 1, size=(embedding_dim,))
     return embedding_matrix
 
@@ -298,6 +304,17 @@ def make_embedding_layer(embedding_matrix, maxlen=200, l2=1e-6, trainable=False,
                                 trainable=trainable)
     return embedding_layer
 
+def pop_meta_features(tokenizer):
+    copy_tokenizer = copy.deepcopy(tokenizer)
+    meta_ft_dict = {}
+    for word in tokenizer.word_index.keys():
+        if is_meta_ft(word):
+            meta_ft_dict[word] = tokenizer.word_index.pop(word, None)
+            tokenizer.word_docs.pop(word, None)
+            tokenizer.word_counts.pop(word, None)
+    copy_tokenizer.word_index = meta_ft_dict
+    return reorder_tokenizer_rank(tokenizer), reorder_tokenizer_rank(copy_tokenizer)
+
 def reduce_embedding_matrix_in_size(embedding_matrix, eliminate=30, **kwargs):
     embedding_matrix = embedding_matrix.copy()
     embedding_matrix[1:-1] = embedding_matrix[1:-1] - embedding_matrix[1:-1].mean(axis=0)
@@ -306,9 +323,9 @@ def reduce_embedding_matrix_in_size(embedding_matrix, eliminate=30, **kwargs):
     embedding_matrix[1:-1, :embedding2.shape[1]] = embedding2
     embedding_matrix = embedding_matrix[:,: embedding2.shape[1]]
 
-def add_oov_vector_and_prune(embedding_matrix, tokenizer, list_of_tokens=None):
+def add_oov_vector_and_prune(embedding_matrix, tokenizer, list_of_tokens=None, meta_features=False):
     embedding_matrix = np.vstack([embedding_matrix, np.zeros((1, embedding_matrix.shape[1]))])
-    return prune_matrix_and_tokenizer(embedding_matrix, tokenizer, list_of_tokens=list_of_tokens)
+    return prune_matrix_and_tokenizer(embedding_matrix, tokenizer, list_of_tokens=list_of_tokens, meta_features=meta_features)
 
 def make_model_function(**kwargs):
     return partial(RNN_general, **kwargs)
@@ -324,8 +341,14 @@ def data_augmentation(text_df, labels):
     concat_df = pd.concat([text_df, new_text]).sort_index().reset_index(drop=True)
     return concat_df, np.tile(labels, (2,1))
 
+def entry_stop_gradients(target, mask):
+    mask_h = tf.logical_not(mask)
+    mask = tf.cast(mask, dtype=target.dtype)
+    mask_h = tf.cast(mask_h, dtype=target.dtype)
+    return tf.stop_gradient(mask_h * target) + mask * target
+
 class EmbeddingSemiTrainable(Layer):
-    def __init__(self, input_dim, output_dim, fixed_weights, embeddings_initializer='uniform', 
+    def __init__(self, input_dim, output_dim, embeddings_initializer='uniform', mask_embeddings=None,
                  input_length=None, **kwargs):
         kwargs['dtype'] = 'int32'
         if 'input_shape' not in kwargs:
@@ -371,7 +394,7 @@ class EmbeddingSemiTrainable(Layer):
         return (input_shape[0], input_length, self.output_dim)
 
 class Embedding_Blanko_DNN(BaseEstimator):
-    def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None, n_out=6,
+    def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None, n_out=6, meta_features=True,
             maxlen=300, embedding_dim=300, trainable=False, prune=True, augment_data=False, list_of_tokens=None,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
@@ -380,6 +403,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
         self.maxlen = maxlen
         self.embedding_dim = embedding_dim
         # test for embedding
+        self.meta_features = meta_features
         self.prune = prune
         self.n_out = n_out
         self.embedding_args = embedding_args
@@ -409,7 +433,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             word_index = self.tokenizer.tokenizer.word_index
             embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim)
             if self.prune:
-                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer, list_of_tokens=list_of_tokens)
+                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer, list_of_tokens=list_of_tokens, meta_features=self.meta_features)
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen,
                     trainable=self.trainable)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
@@ -428,7 +452,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             word_index = self.tokenizer.tokenizer.word_index
             embedding_matrix = make_embedding_matrix(self.embedding, word_index, max_features=self.max_features, maxlen=self.maxlen, embedding_dim=self.embedding_dim)
             if self.prune:
-                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer, list_of_tokens=list_of_tokens)
+                embedding_matrix, self.tokenizer.tokenizer = add_oov_vector_and_prune(embedding_matrix, self.tokenizer.tokenizer, list_of_tokens=list_of_tokens, meta_features=self.meta_features)
             if self.halfprec:
                 embedding_matrix = embedding_matrix.astype('float16')
             embedding_layer = make_embedding_layer(embedding_matrix, maxlen=self.maxlen, trainable=self.trainable,  preprocess_embedding=self.preprocess_embedding, **self.embedding_args)
@@ -443,6 +467,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
             self.model = Model(inputs=inputs, outputs=outputs)
             self.model.compile(**self.compilation_args)
         if isinstance(X, dict):
+            X = {key : val for key, val in X.iteritems()}
             if self.augment_data:
                 if isinstance(y, dict):
                     X['main_input'], y['main_output'] = data_augmentation(X['main_input'], y['main_output'])
@@ -461,6 +486,7 @@ class Embedding_Blanko_DNN(BaseEstimator):
 
     def predict(self, X):
         if isinstance(X, dict):
+            X = {key : val for key, val in X.iteritems()}
             X['main_input'] = self.tokenizer.transform(X['main_input'])
         else:
             X = self.tokenizer.transform(X)
@@ -518,26 +544,26 @@ def LSTM_twice_dropout_model(x,n_out=6):
     x = Dense(n_out, activation="sigmoid")(x)
     return x
 
-def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=64, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1,n_out=6):
-    if rnn_func is None:
-        rnn_func = CuDNNGRU
-    if not isinstance(hidden_rnn, list):
-        hidden_rnn = [hidden_rnn] * no_rnn_layers
-    if len(hidden_rnn) != no_rnn_layers:
-        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
-    for rnn_size in hidden_rnn:
-        x = Dropout(dropout)(x)
-        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
-    conc_act = Reshape((500*96,))(x)
-    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(conc_act)
-    x = GlobalMaxPool1D()(x)
-    x = Dropout(dropout)(x)
-    conc_act2 = concatenate([aux_dense,x])
-    x = Dense(hidden_dense, activation='relu')(conc_act2)
-    x = Dropout(dropout)(x)
-    x = Dense(5, activation="sigmoid", name='main_output')(x)
-    return [x, aux_dense], None
-
+#def RNN_aux_attention(x, no_rnn_layers=2, hidden_rnn=64, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1,n_out=6):
+#    if rnn_func is None:
+#        rnn_func = CuDNNGRU
+#    if not isinstance(hidden_rnn, list):
+#        hidden_rnn = [hidden_rnn] * no_rnn_layers
+#    if len(hidden_rnn) != no_rnn_layers:
+#        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+#    for rnn_size in hidden_rnn:
+#        x = Dropout(dropout)(x)
+#        x = Bidirectional(rnn_func(rnn_size, return_sequences=True))(x)
+#    conc_act = Reshape((500*96,))(x)
+#    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(conc_act)
+#    x = GlobalMaxPool1D()(x)
+#    x = Dropout(dropout)(x)
+#    conc_act2 = concatenate([aux_dense,x])
+#    x = Dense(hidden_dense, activation='relu')(conc_act2)
+#    x = Dropout(dropout)(x)
+#    x = Dense(5, activation="sigmoid", name='main_output')(x)
+#    return [x, aux_dense], None
+#
 
 #WORK IN PROGRESS!!!
 def RNN_aux_loss_skip(x, no_rnn_layers=2, hidden_rnn=64, hidden_dense=48, rnn_func=None, dropout=0.5, aux_dim=1):
@@ -790,22 +816,24 @@ def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=N
     x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def RNN_aug_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, input_len=500,n_out=6):
+def RNN_aug_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, input_len=500, n_out=6, n_meta=7):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
         hidden_rnn = [hidden_rnn] * no_rnn_layers
     if len(hidden_rnn) != no_rnn_layers:
         raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    aug_input = Input(shape=(input_len,), dtype='int32', name='aug_input')
+    embedding_layer2 = Embedding(n_meta,
+                                5, input_length=input_len,
+                                trainable=True)(aug_input)
+    conc_1 = concatenate([x, embedding_layer_2])
+#    aug_gru = Bidirectional(CuDNNGRU(10, return_sequences=True))(aug_drop)
     vals = []
     for rnn_size in hidden_rnn:
         x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
         vals.append(x)
-    aug_input = Input(shape=(input_len, 1), dtype='float32', name='aug_input')
-    aug_drop = Dropout(0.5)(aug_input)
-    aug_gru = Bidirectional(CuDNNGRU(10, return_sequences=True))(aug_drop)
-    vals.append(aug_gru)
     vals = concatenate(vals)
     x = AttentionWeightedAverage(name='attlayer')(vals)
 #    x = Dropout(dropout)(x)
@@ -876,7 +904,7 @@ def RNN_conc_aux(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=No
 #    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(y)
     x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
     x = Dropout(dropout)(x)
-    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(y)
+    aux_dense = Dense(aux_dim, activation='sigmoid', name='aux_output')(x)
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
 #    x = Dropout(dropout)(x)
@@ -923,8 +951,30 @@ def RNN_dropout_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_fun
     x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
+def RNN_stop_update_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=None, rnn_func=None, dropout=0.5, n_out=6, mask=None):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    vals = []
+    x = entry_stop_gradients(x, mask)
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+#    x = concatenate([GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+    if hidden_dense is not None:
+        x = Dense(int(hidden_dense), activation='relu')(x)
+        x = Dropout(dropout)(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
+    return x, None
 
-def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5,n_out=6):
+def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=None, rnn_func=None, dropout=0.5,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
@@ -936,16 +986,13 @@ def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, 
         x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
         vals.append(x)
-
-    for rnn_size in hidden_rnn:
-        x = Dropout(dropout)(x)
-        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
-        vals.append(x)
     x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+#    x = concatenate([GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
     x = Dropout(dropout)(x)
 #    x = BatchNormalization(x)
-#    x = Dense(int(hidden_dense), activation='relu')(x)
-#    x = Dropout(dropout)(x)
+    if hidden_dense is not None:
+        x = Dense(int(hidden_dense), activation='relu')(x)
+        x = Dropout(dropout)(x)
     x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
