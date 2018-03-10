@@ -351,10 +351,9 @@ def test_meta_models(model_name_list, meta_features=None, rank=True):
     from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier
     from sklearn.linear_model import LogisticRegressionCV
     from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
-    import xgboost as xgb
+    import lightgbm as lgb
     model_name_list = sorted(model_name_list)
 
-    xgb_model = xgb.XGBClassifier()
 
     #brute force scan for all parameters, here are the tricks
     #usually max_depth is 6,7,8
@@ -373,19 +372,30 @@ def test_meta_models(model_name_list, meta_features=None, rank=True):
                   'colsample_bytree': [0.5, 0.6, 0.7,0.8],
                   'n_estimators': [5, 15, 25, 50, 100, 150], #number of trees, change it to 1000 for better results
                   'seed': [1337]}
-    clf_xgb = partial(GridSearchCV, xgb_model, parameters, n_jobs=5,
+
+    lgbclf = lgb.LGBMClassifier(metric="auc", boosting_type="gbdt")
+    parameters_lgb ={'max_depth' : [3,4], 'n_estimators' : [125, 200],
+            'num_leaves' :[8, 10, 13],
+            'learning_rate' : [0.1],
+            'feature_fraction' : [0.45],
+            'colsample_bytree' : [0.45],
+            'bagging_fraction' : [0.8],
+            'bagging_freq' : [5],
+            'reg_lambda':[0.2]}
+    gridsearch_lgb = partial(GridSearchCV, lgbclf, parameters_lgb, n_jobs=2,
                        cv=6,
                        scoring='roc_auc',
                        verbose=2, refit=True)
-    classifier_dict = {'logistic_regression' : LogisticRegressionCV}
+    classifier_dict = {'logistic_regression' : LogisticRegressionCV,
+                       'lgb' : gridsearch_lgb}
 #                        'xgb' : clf_xgb}
 #                       'extra_trees' : partial(GridSearchCV, ExtraTreesClassifier(), {'n_estimators' : [5, 10, 15]}),
 #                       'gbc' : partial(GridSearchCV, GradientBoostingClassifier(), {'n_estimators' : [30], 'max_depth' : [2, 3]})}
 
     _, train_y = pre.load_data()
-    prediction_dict = {model_name :joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
-    prediction_dict = {key:hlp.split_to_norm_rank(val, rank) for key, val in prediction_dict.iteritems()}
-    prediction_dict = {key:hlp.preds_to_norm_rank(val) for key, val in prediction_dict.iteritems()}
+#    prediction_dict = {model_name : joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
+#    prediction_dict = {key:hlp.split_to_norm_rank(val, rank) for key, val in prediction_dict.iteritems()}
+#    prediction_dict = {key:hlp.preds_to_norm_rank(val) for key, val in prediction_dict.iteritems()}
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions_col_dict = get_prediction_col_dict(model_name_list)
     if meta_features is not None:
@@ -401,7 +411,7 @@ def get_prediction_col_dict(model_name_list, rank=None):
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions_col_dict = {}
     for i, col in enumerate(cols):
-        pred_col = np.hstack([prediction_dict[model_name][:,i][:,None] for model_name in sorted(prediction_dict.keys())])
+        pred_col = np.hstack([hlp.logit(prediction_dict[model_name][:,i])[:,None] for model_name in sorted(prediction_dict.keys())])
         predictions_col_dict[col] = pred_col
     return predictions_col_dict
 
@@ -454,14 +464,14 @@ def apply_meta_models(estimator_dict, model_name_list, meta_features=None, rank=
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions_test = []
     for i, col in enumerate(cols):
-        pred_col = np.hstack([prediction_dict[model_name][:,i][:,None] for model_name in sorted(prediction_dict.keys())])
+        pred_col = np.hstack([hlp.logit(prediction_dict[model_name][:,i])[:,None] for model_name in sorted(prediction_dict.keys())])
         if meta_features is not None:
             pred_col = np.hstack([pred_col, meta_features])
         if rank_cv:
             predictions_test.append(hlp.norm_rank(estimator_dict[col].predict_proba(pred_col)[:,1]))
         else:
-            predictions_test.append(estimator_dict[col].predict_proba(pred_col)[:,1])
-    return predictions_test
+            predictions_test.append(estimator_dict[col].predict_proba(pred_col)[:,1][:,None])
+    return np.hstack(predictions_test)
 #    hlp.write_model(predictions_test)
 
 
@@ -479,7 +489,7 @@ def average_meta_models(estimator_dict, model_name_list, meta_features=None, ran
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions_test = []
     for i, col in enumerate(cols):
-        pred_col = np.hstack([prediction_dict[model_name][:,i][:,None] for model_name in sorted(prediction_dict.keys())])
+        pred_col = np.hstack([hlp.logit(prediction_dict[model_name][:,i])[:,None] for model_name in sorted(prediction_dict.keys())])
         if meta_features is not None:
             pred_col = np.hstack([pred_col, meta_features])
         if rank_cv:
@@ -505,9 +515,10 @@ def meta_model_to_test_set(meta_dict, **kwargs):
 
 if __name__=='__main__':
     models_to_use = ['cval_0218-1903', 'cval_0221-1635', 'cval_0222-1623', 'cval_0223-1022', 'cval_0223-1838', 'cval_0224-2227', 'finetuned_huge_finetune', 'one_layer_gru']#, 'shallow_CNN']
-    meta_models = test_meta_models(models_to_use, rank=['threat', 'identity_hate'])
-    joblib.dump(meta_models, 'fit_no_logit_full_meta_models.pkl')
-    apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=True)
+    meta_models = test_meta_models(models_to_use, rank=None)
+    joblib.dump(meta_models, 'fit_no_rank_full_meta_models.pkl')
+    predictions_test = apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=False)
+    predictions_test_lgb = apply_meta_models(meta_models['lgb'][2], models_to_use, rank_cv=False)
 #    test_tfidf_models()
 #    report_ensembling(['cval_0218-1903', 'cval_0219-0917', 'cval_0220-1042', 'cval_0221-1635', 'cval_0222-1621'], 'attention_huge_trainable_tfidf')
 #    estimator_list, score_list = stack_ensembling(['cval_0218-1903', 'cval_0215-1830', 'cval_0219-0917', 'cval_0220-1042'], 'attention_and_huge_ensemble')
