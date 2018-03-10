@@ -52,28 +52,32 @@ if __name__=='__main__':
     weight_tensor = tf.convert_to_tensor(class_weights, dtype=tf.float32)
     loss = partial(models.weighted_binary_crossentropy, weights=weight_tensor)
     loss.__name__ = 'weighted_binary_crossentropy'
-    model_params = simple_huge_net(prune=True)
+#    model_params = simple_huge_net(prune=True, trainable=True)
+    model_params = shallow_CNN()
 #    model_params['compilation_args']['loss']['main_output'] = models.roc_auc_score
-    model_name = 'no_clipping'
+    model_name = 'shallow_CNN'
+    not_toxic_bnz = np.logical_and(np.logical_not(train_y[:,0]), train_y[:,1:].any(axis=1))
     frozen_tokenizer = pre.KerasPaddingTokenizer(max_features=model_params['max_features'], maxlen=model_params['maxlen'])
     frozen_tokenizer.fit(pd.concat([train_text, test_text]))
+#    train_text = pd.concat([train_text[not_toxic_bnz]]*5+[train_text])
+#    train_y = np.vstack([train_y[not_toxic_bnz]]*5 + [train_y])
 #    list_of_tokens = frozen_tokenizer.tokenizer.texts_to_sequences(pd.concat([train_text, test_text]))
-    embedding = hlp.get_glove_embedding('../crawl-300d-2M.vec')
+    embedding = hlp.get_fasttext_embedding('../crawl-300d-2M.vec')
+#    embedding = hlp.get_glove_embedding('../glove.twitter.27B.200d.txt')
     opt = model_params['compilation_args'].pop('optimizer_func')
     optargs = model_params['compilation_args'].pop('optimizer_args')
-    optargs['lr'] = 0.0005
     model_params['compilation_args']['optimizer'] = opt(**optargs)
 #    model = fit_model(model_name, fit_args, {'main_input':train_text}, {'main_output': train_y, 'aux_output' : aux_task}, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
-#    hlp.write_model(model.predict({'main_input':test_text})[0])
+#    hlp.write_model(model.predict({'main_input':test_text}))
 #    hlp.make_training_set_preds(model, {'main_input':train_text}, train_y)
 
     model = models.Embedding_Blanko_DNN(tokenizer=frozen_tokenizer, embedding=embedding, **model_params)
-#    old_model.load_weights(model_name+'_best.hdf5')
+##    old_model.load_weights(model_name+'_best.hdf5')
     lrfinder = lrf.LRFinder(model.model)
     train_x = frozen_tokenizer.transform(train_text)
     lrfinder.find(train_x, train_y, 0.001, 0.05, batch_size=80, epochs=1)
-#    lrfinder.losses = [np.log(loss) for loss in lrfinder.losses]
+##    lrfinder.losses = [np.log(loss) for loss in lrfinder.losses]
     joblib.dump([lrfinder.losses, lrfinder.lrs], '{}.pkl'.format(model_name))
     lrfinder.plot_loss()
     plt.savefig('loss_{}.svg'.format(model_name))
@@ -81,7 +85,7 @@ if __name__=='__main__':
     lrfinder.plot_loss_change()
     plt.savefig('loss_change_{}.svg'.format(model_name))
     plt.close()
-
+#
 #    model = load_full_model(model_name, embedding=embedding, tokenizer=frozen_tokenizer, **model_params)
     # SHUFFLE TRAINING SET so validation split is different every time
 #    row_idx = np.arange(0, train_text.shape[0])

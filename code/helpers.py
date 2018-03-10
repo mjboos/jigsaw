@@ -64,7 +64,7 @@ def norm_rank(arr):
 def make_weight_matrix(y_mat, weights):
     return np.tile(weights[None], (y_mat.shape[0], 1))
 
-def write_model(predictions, correct=None,
+def write_model(predictions, correct=None, name='',
                 cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']):
     import pandas as pd
     import time
@@ -74,7 +74,7 @@ def write_model(predictions, correct=None,
     subm = pd.read_csv('../input/sample_submission.csv')
     submid = pd.DataFrame({'id': subm["id"]})
     submission = pd.concat([submid, pd.DataFrame(predictions, columns=cols)], axis=1)
-    submission.to_csv('../submissions/submission_{}.csv'.format(timestr), index=False)
+    submission.to_csv('../submissions/submission_{}_{}.csv'.format(name, timestr), index=False)
 
 def logit(x):
     x[x==1.] -= np.finfo(np.float32).eps
@@ -93,7 +93,8 @@ def cross_val_score_with_estimators(classifier_func, X, y, cv=6, scoring=None):
         clf = classifier_func().fit(X[train], y[train])
         scores.append(scoring(y[test], clf.predict_proba(X[test])[:,1]))
         estimators.append(clf)
-    return scores, estimators
+    final_estimator = classifier_func().fit(X, y)
+    return scores, estimators, final_estimator
 
 def sparse_to_dense(X):
     return X.toarray()

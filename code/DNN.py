@@ -137,11 +137,38 @@ def hacky_load_LSTM():
     model.load_weights('300_fasttext_LSTM_best.hdf5')
     return model
 
+def keras_json_multi_to_one(model_json):
+    model_dict = json.loads(model_json)
+    model_dict['config']['layers'][-1]['config']['units'] = 1
+    return json.dumps(model_dict)
+
+def hacky_load_weights(model_name, model, i=None):
+    import re
+    from keras.models import model_from_json
+    model_path = '../model_specs/{}.json'.format(model_name)
+    with tf.device('/cpu:0'):
+        with open(model_path, 'r') as fl:
+            old_model_json = json.load(fl)
+        if i is not None:
+            old_model_json = keras_json_multi_to_one(old_model_json)
+            best_weights_path="{}_finetune_{}_best.hdf5".format(model_name, i)
+        else:
+            best_weights_path="{}_best.hdf5".format(model_name)
+        old_model = model_from_json(old_model_json)
+        old_model.load_weights(best_weights_path)
+        weights = [layer.get_weights() for layer in old_model.layers]
+        for weight_i, weights_old in enumerate(weights):
+            if weight_i >= 2:
+                model.layers[weight_i].set_weights(weights_old)
+
 def transfer_weights_multi_to_one(weights, model, i):
     for weights_old, layer in zip(weights[2:-1], model.layers[2:-1]):
         layer.set_weights(weights_old)
     # now for the last layer
     model.layers[-1].set_weights([weights[-1][0][:,i][:,None], weights[-1][1][i][None]])
+
+def get_weights(model):
+    return [layer.get_weights() for layer in model.layers]
 
 def change_trainable(layer, trainable, verbose=False):
     """ Helper method that fixes some of Keras' issues with wrappers and
@@ -279,11 +306,11 @@ def simple_huge_aux_net(trainable=False, prune=True):
     return model_params
 
 def simple_huge_1_layer_net(trainable=False, prune=True):
-    model_func = partial(models.RNN_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32)
+    model_func = partial(models.RNN_conc, rnn_func=keras.layers.LSTM, no_rnn_layers=1, hidden_rnn=96, hidden_dense=None)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1., 'clipvalue':1., 'beta_2':0.99}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def simple_huge_net(trainable=False, prune=True):
@@ -295,11 +322,11 @@ def simple_huge_net(trainable=False, prune=True):
     return model_params
 
 def simple_huge_dropout_net(trainable=False, prune=True):
-    model_func = partial(models.RNN_dropout_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96)
+    model_func = partial(models.RNN_dropout_conc, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=None)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1., 'clipvalue':1., 'beta_2':0.99}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def simple_small_trainable_net(trainable=False, prune=True):
@@ -319,11 +346,11 @@ def simple_net(trainable=False, prune=True):
     return model_params
 
 def shallow_CNN(trainable=False, prune=True):
-    model_func = partial(models.CNN_shallow, n_filters=50, kernel_sizes=[3,4,5], dropout=0.5)
+    model_func = partial(models.CNN_shallow, n_filters=96, kernel_sizes=[3,4,5], dropout=0.3, dropout_embed=0.3, act='relu')
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer' : optimizers.Adam(lr=0.001, clipvalue=1., clipnorm=1.), 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1., 'clipvalue' : 1.}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def add_net():
@@ -342,4 +369,9 @@ def old_gru_net(trainable=False, prune=True):
         'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1., 'beta_2' : 0.99}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
-
+def just_length():
+    model_params = {
+        'max_features' : 500000, 'maxlen' : 300,
+        'embedding_dim' : 300, 'trainable' : False, 'prune' : True,
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1., 'beta_2' : 0.99}, 'loss':'binary_crossentropy', 'loss_weights' : [1.]}}
+    return model_params

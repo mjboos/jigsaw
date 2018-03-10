@@ -21,7 +21,7 @@ from keras.utils import to_categorical
 from keras.layers import Dense, Input, GlobalMaxPooling1D
 import tensorflow as tf
 from keras import backend
-from keras.layers import Conv1D, MaxPooling1D, Embedding, Reshape, Activation, Lambda
+from keras.layers import Conv1D, MaxPooling1D, Embedding, Reshape, Activation, Lambda, SpatialDropout1D
 from keras.models import Model
 from keras.layers import Dense, Embedding, Input
 from keras import optimizers
@@ -36,6 +36,7 @@ import string
 import json
 import enchant
 import copy
+import DNN
 from keras.engine.topology import Layer
 import keras.backend as K
 from keras import initializers
@@ -296,12 +297,13 @@ def make_embedding_layer(embedding_matrix, maxlen=200, l2=1e-6, trainable=False,
     # note that we set trainable = False so as to keep the embeddings fixed
     from keras.regularizers import L1L2
     embed_reg = L1L2(l2=l2) if l2 != 0 and trainable else None
-    embedding_layer = Embedding(embedding_matrix.shape[0],
-                                embedding_matrix.shape[1],
-                                weights=[embedding_matrix],
-                                embeddings_regularizer=embed_reg,
-                                input_length=maxlen,
-                                trainable=trainable)
+    with tf.device('/cpu:0'):
+        embedding_layer = Embedding(embedding_matrix.shape[0],
+                                    embedding_matrix.shape[1],
+                                    weights=[embedding_matrix],
+                                    embeddings_regularizer=embed_reg,
+                                    input_length=maxlen,
+                                    trainable=trainable)
     return embedding_layer
 
 def pop_meta_features(tokenizer):
@@ -395,7 +397,7 @@ class EmbeddingSemiTrainable(Layer):
 
 class Embedding_Blanko_DNN(BaseEstimator):
     def __init__(self, embedding=None, max_features=20000, model_function=None, tokenizer=None, n_out=6, meta_features=True,
-            maxlen=300, embedding_dim=300, trainable=False, prune=True, augment_data=False, list_of_tokens=None,
+            maxlen=300, embedding_dim=300, trainable=False, prune=True, augment_data=False, list_of_tokens=None, config=False,
             compilation_args={'optimizer':'adam','loss':'binary_crossentropy','metrics':['accuracy']}, embedding_args={'n_components' : 100}):
         self.compilation_args = compilation_args
         self.max_features = max_features
@@ -438,7 +440,16 @@ class Embedding_Blanko_DNN(BaseEstimator):
                     trainable=self.trainable)
             sequence_input = Input(shape=(self.maxlen,), dtype='int32', name='main_input')
             embedded_sequences = embedding_layer(sequence_input)
+#            if not config:
             outputs, aux_input = self.model_function(embedded_sequences, n_out=self.n_out)
+#            else:
+#                if isinstance(config, str):
+#                    config = DNN.load_keras_model(config).get_config()
+#                config_layers = config['layers'][2:]
+#                x = embedded_sequences
+#                for layer in config_layers:
+#                    x = keras.layers.deserialize(layer)(x)
+#                outputs, aux_input = x, None
             if aux_input is not None:
                 inputs = [sequence_input, aux_input]
             else:
@@ -929,21 +940,22 @@ def RNN_aux_loss(x, no_rnn_layers=1, hidden_rnn=64, hidden_dense=32, rnn_func=No
     x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return [x, aux_dense], None
 
-def RNN_dropout_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_embed=0.5,n_out=6):
+def RNN_dropout_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_embed=0.5,n_out=6,mask=None):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
     if not isinstance(hidden_rnn, list):
         hidden_rnn = [hidden_rnn] * no_rnn_layers
     if len(hidden_rnn) != no_rnn_layers:
         raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
-    vals = []
+#    x = entry_stop_gradients(x, mask)
+    vals = [x]
     x = Dropout(dropout_embed, noise_shape=(None, 1, int(x.shape[-1])))(x)
     for i, rnn_size in enumerate(hidden_rnn):
         if i > 0:
             x = Dropout(dropout)(x)
         x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
         vals.append(x)
-    x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+    x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals[1:]])
     x = Dropout(dropout)(x)
 #    x = BatchNormalization(x)
 #    x = Dense(int(hidden_dense), activation='relu')(x)
@@ -1032,30 +1044,20 @@ def RNN_general_one_class(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rn
     x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
 
-def CNN_shallow(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5,n_out=6):
+def CNN_shallow(x, n_filters=64, kernel_sizes=[3,4,5], dropout_embed=0.5, dropout=0.5, n_out=6,act=None):
     outputs = []
-    for kernel_size in kernel_sizes:
-        output_i = Conv1D(n_filters, kernel_size=kernel_size,
-                          activation='relu',
+    x = SpatialDropout1D(dropout_embed)(x)
+    if not isinstance(n_filters, list):
+        n_filters = [n_filters] * len(kernel_sizes)
+    for n_filter, kernel_size in zip(n_filters, kernel_sizes):
+        output_i = Conv1D(n_filter, kernel_size=kernel_size,
+                          activation=act,
                           padding='valid')(x)
-        output_i = GlobalMaxPooling1D()(output_i)
-        outputs.append(output_i)
+        outputs.append(GlobalMaxPooling1D()(output_i))
+        outputs.append(GlobalAveragePooling1D()(x))
     x = concatenate(outputs, axis=1)
     x = Dropout(rate=dropout)(x)
     x = Dense(n_out, activation="sigmoid", name='main_output')(x)
-    return x, None
-
-def CNN_shallow_1d(x, n_filters=100, kernel_sizes=[3,4,5], dropout=0.5,n_out=6):
-    outputs = []
-    for kernel_size in kernel_sizes:
-        output_i = Conv1D(n_filters, kernel_size=kernel_size,
-                          activation='relu',
-                          padding='valid')(x)
-        output_i = GlobalMaxPooling1D()(output_i)
-        outputs.append(output_i)
-    x = concatenate(outputs, axis=1)
-    x = Dropout(rate=dropout)(x)
-    x = Dense(1, activation="sigmoid", name='main_output')(x)
     return x, None
 
 def roc_auc_score(y_true, y_pred):
