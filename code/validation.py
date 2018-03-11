@@ -99,18 +99,49 @@ def predict_parallel(X, y, train, test, estimator):
     scores = roc_auc_score(y[test], predictions)
     return (predictions, scores, estimator)
 
-def model_validate(X, y, model, cv=6):
+def model_func_validate(X, y, model_func, fixed_args, kwargs, cv=6, model_name=None):
     '''Builds and evaluates a model on X, y'''
     from sklearn.base import clone
+    new_dict = {key:val for key, val in fixed_args.items()}
+    new_dict.update(kwargs)
+    est = model_func(**new_dict)
     kfold = KFold(n_splits=cv, shuffle=False)
-    new_time = 'cval_{}'.format(time.strftime("%m%d-%H%M"))
+    if model_name is None:
+        model_name = 'cval_{}'.format(time.strftime("%m%d-%H%M"))
     predictions, scores, estimators = zip(*joblib.Parallel(n_jobs=6)(joblib.delayed(predict_parallel)(X, y, train, test, clone(model)) for train, test in kfold.split(X)))
     score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
     predictions = np.vstack(predictions)
-    joblib.dump(predictions, '../predictions/{}.pkl'.format(new_time), compress=3)
-    joblib.dump(score_dict, '../scores/{}.pkl'.format(new_time))
-    joblib.dump(estimators, '../models/{}.pkl'.format(new_time))
+    joblib.dump(predictions, '../predictions/{}.pkl'.format(model_name), compress=3)
+    joblib.dump(score_dict, '../scores/{}.pkl'.format(model_name))
+    joblib.dump(estimators, '../models/{}.pkl'.format(model_name))
     return score_dict
+
+def model_validate(X, y, model, cv=6, model_name=None, save=True):
+    '''Builds and evaluates a model on X, y'''
+    from sklearn.base import clone
+    kfold = KFold(n_splits=cv, shuffle=False)
+    if model_name is None:
+        model_name = 'cval_{}'.format(time.strftime("%m%d-%H%M"))
+    predictions, scores, estimators = zip(*joblib.Parallel(n_jobs=6)(joblib.delayed(predict_parallel)(X, y, train, test, clone(model)) for train, test in kfold.split(X)))
+    score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
+    if save:
+        predictions = np.vstack(predictions)
+        joblib.dump(predictions, '../predictions/{}.pkl'.format(model_name), compress=3)
+        joblib.dump(score_dict, '../scores/{}.pkl'.format(model_name))
+        joblib.dump(estimators, '../models/{}.pkl'.format(model_name))
+    return score_dict
+
+def evaluate_nbsvm(X, y, fixed_args, kwargs, model_name=None):
+    tfidf_args = {key:val for key, val in fixed_args['tfidf'].iteritems()}
+    tfidf_args.update(kwargs.get('tfidf', {}))
+    tfidf = models.get_tfidf_model(**tfidf_args)
+    new_dict = {key:val for key, val in fixed_args.items()}
+    new_dict.pop('tfidf')
+    new_dict.update(kwargs)
+    new_dict.pop('tfidf')
+    model = MultiOutputClassifier(models.NBMLR(dual=True, **new_dict))
+    train_X = tfidf.transform(X)
+    return model_validate(train_X, y, model, model_name=model_name, save=False)
 
 def do_hyper_search(space, model_function, **kwargs):
     '''Do a search over the space using a frozen model function'''
@@ -154,8 +185,8 @@ def hyperopt_token_model(model_name, model_function, space, fixed_args):
     test_text, _ = pre.load_data('test.csv')
 
     # remove keys that are in space from fixed_args
-    all_search_space_keys = space.keys() + list(*[sp[key].keys() for key in sp])
-    fixed_args = {key : val for key, val in fixed_args.iteritems() if key not in all_search_space_keys}
+    all_search_space_keys = space.keys() + list(*[space[key].keys() for key in space if isinstance(space[key], dict)])
+#    fixed_args = {key : val for key, val in fixed_args.iteritems() if key not in all_search_space_keys}
 
     frozen_tokenizer = pre.KerasPaddingTokenizer(maxlen=fixed_args['maxlen'],
             max_features=fixed_args['max_features'])
@@ -168,12 +199,28 @@ def hyperopt_token_model(model_name, model_function, space, fixed_args):
     fixed_args = {'tokenizer':frozen_tokenizer, 'embedding':embedding, 'compilation_args':compilation_args}
 
     # freeze all constant parameters
-    frozen_model_func = partial(model_function, train_text, train_y, fit_args, fixed_args)
+    frozen_model_func = partial(model_function, train_text, train_y, fit_args, fixed_args, model_name=model_name)
 
     trials = Trials()
     best = fmin(frozen_model_func, space=space, algo=tpe.suggest, max_evals=20, trials=trials)
     hlp.dump_trials(trials, fname=model_name)
     return best
+
+def hyperopt_tfidf_model(model_name, model_function, space, fixed_args):
+    train_text, train_y = pre.load_data()
+    test_text, _ = pre.load_data('test.csv')
+
+    # remove keys that are in space from fixed_args
+    all_search_space_keys = space.keys() + list(*[space[key].keys() for key in space if isinstance(space[key], dict)])
+#    fixed_args = {key : val for key, val in fixed_args.iteritems() if key not in all_search_space_keys}
+    # freeze all constant parameters
+    frozen_model_func = partial(model_function, train_text, train_y, fixed_args, model_name=model_name)
+
+    trials = Trials()
+    best = fmin(frozen_model_func, space=space, algo=tpe.suggest, max_evals=20, trials=trials)
+    hlp.dump_trials(trials, fname=model_name)
+    return best
+
 
 #TODO: better feature selection
 def validate_feature_model(model_name, model_function, space, fixed_params_file='../parameters/fixed_features.json', max_evals=20, trials=None):
@@ -190,26 +237,33 @@ def validate_feature_model(model_name, model_function, space, fixed_params_file=
     return best
 
 def do_hyperparameter_search():
-    DNN_search_space = {'model_function' : {'no_rnn_layers' : hp.choice('no_rnn_layers', [1,2]),
-            'hidden_rnn' : hp.quniform('hidden_rnn', 32, 96, 16),
-            'hidden_dense' : hp.quniform('hidden_dense', 16, 256, 16)}}
+#    DNN_search_space = {'model_function' : {'no_rnn_layers' : hp.choice('no_rnn_layers', [1,2]),
+#            'hidden_rnn' : hp.quniform('hidden_rnn', 32, 96, 16),
+#            'hidden_dense' : hp.quniform('hidden_dense', 16, 256, 16)}}
+    from hyperopt.pyll.base import scope
+    tfidf_search_space = {'tfidf' : {'ngram_range' : hp.choice('ngram', [(1,2), (1,1), (1,3)]),
+                                     'stop_words' : hp.choice('stopwords', ['english', None]),
+                                     'min_df' : scope.int(hp.quniform('mindf', 3, 100, 5))},
+                           'C' : hp.uniform('C', 0.0, 2.0)}
+    tfidf_fixed = {'tfidf' : {'strip_accents' : 'unicode'}}
     token_models_to_test = {
-            'DNN' : (DNN_model_validate, DNN_search_space, DNN.simple_attention())}
+            'nbsvm' : (evaluate_nbsvm, tfidf_search_space, tfidf_fixed)}
+#            'DNN' : (DNN_model_validate, DNN_search_space, DNN.simple_attention())}
     for model_name, (func, space, fixed_args) in token_models_to_test.iteritems():
-        best = hyperopt_token_model(model_name, func, space, fixed_args)
+        best = hyperopt_tfidf_model(model_name, func, space, fixed_args)
         joblib.dump(best, 'best_{}.pkl'.format(model_name))
 
 def test_tfidf_models():
     from sklearn.model_selection import GridSearchCV
     from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier
-    from sklearn.linear_model import LogisticRegressionCV
+    from sklearn.linear_model import LogisticRegressionCVA
     tfidf = models.get_tfidf_model()
     train_text, train_y = pre.load_data()
     train_X = tfidf.transform(train_text)
-    tfidf_based = {'NB' : MultiOutputClassifier(models.NBMLR(dual=True, C=4)),
-                       'extra_trees' : ExtraTreesClassifier(),
-                       'gbc' : MultiOutputClassifier(GradientBoostingClassifier())}
-    score_dict = { model_name : model_validate(train_X, train_y, clf) for model_name, clf in tfidf_based.items()}
+    tfidf_based = {'NB' : MultiOutputClassifier(models.NBMLR(dual=True, C=4))}
+#                       'extra_trees' : ExtraTreesClassifier(),
+#                       'gbc' : MultiOutputClassifier(GradientBoostingClassifier())}
+    score_dict = { model_name : model_validate(train_X, train_y, clf, model_name=model_name) for model_name, clf in tfidf_based.items()}
     return score_dict
 
 def make_loss_function(class_weights):
@@ -531,16 +585,17 @@ def meta_model_to_test_set(meta_dict, **kwargs):
 if __name__=='__main__':
     models_to_use = ['cval_0218-1903', 'cval_0221-1635', 'cval_0223-1022', 'cval_0223-1838', 'cval_0224-2227', 'finetuned_huge_finetune', 'shallow_relu_CNN']
 #    make_average_test_set_predictions('shallow_CNN')
-    make_average_DNN_test_set_predictions('shallow_relu_CNN')
-    train_text, _ = pre.load_data()
+#    make_average_DNN_test_set_predictions('shallow_relu_CNN')
+#    train_text, _ = pre.load_data()
     hier_models = [['cval_0218-1903','cval_0219-0917','cval_0220-1042','huge_channel_dropout','huge_finetune','finetuned_huge_finetune'],
                    ['shallow_relu_CNN'],
                    ['cval_0221-1635'],
                    ['cval_0223-1838'],
                    ['cval_0224-2227']]
-    models_to_use = average_list_of_lists(hier_model)
-    meta_models = test_meta_models(models_to_use, rank=None)#, meta_features=feature_engineering.compute_features(train_text))
-    joblib.dump(meta_models, 'fit_lgb_avg_meta_models.pkl')
+    do_hyperparameter_search()
+#    models_to_use = average_list_of_lists(hier_model)
+#    meta_models = test_meta_models(models_to_use, rank=None)#, meta_features=feature_engineering.compute_features(train_text))
+#    joblib.dump(meta_models, 'fit_lgb_avg_meta_models.pkl')
 #    predictions_test = apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=False)
 #    predictions_test_lgb = apply_meta_models(meta_models['lgb'][2], models_to_use, rank_cv=False)
 #    test_tfidf_models()

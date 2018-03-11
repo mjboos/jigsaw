@@ -134,14 +134,13 @@ import re, string
 re_tok = re.compile('([{}“”¨«»®´·º½¾¿¡§£₤‘’])'.format(string.punctuation))
 def tokenize(s): return re_tok.sub(r' \1 ', s).split()
 
-def get_tfidf_model(pre_args={'ngram_range' : (1,2), 'tokenizer' : None,
-                            'min_df' : 3, 'max_df' : 0.9, 'strip_accents' : 'unicode',
-                            'use_idf' : 1, 'smooth_idf' : 1, 'sublinear_tf' : 1}):
-    if pre_args['tokenizer'] is None:
-        pre_args['tokenizer'] = tokenize
+def get_tfidf_model(ngram_range=(1,2), tokenizer=None, min_df=0.005, max_df=0.9, strip_accents='unicode',
+        use_idf=1, smooth_idf=1, sublinear_tf=1, **kwargs):
+    if tokenizer is None:
+        tokenizer = tokenize
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data()
-    tfidf = TfidfVectorizer(stop_words=eng_stopwords, **pre_args).fit(pd.concat([train_text, test_text]))
+    tfidf = TfidfVectorizer(ngram_range=ngram_range, tokenizer=tokenizer, min_df=min_df, max_df=max_df, strip_accents=strip_accents, use_idf=use_idf, smooth_idf=smooth_idf, sublinear_tf=sublinear_tf, **kwargs).fit(pd.concat([train_text, test_text]))
     return tfidf
 
 def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
