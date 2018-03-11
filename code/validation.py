@@ -26,7 +26,7 @@ import feature_engineering
 import DNN
 import copy
 import mkl
-mkl.set_num_threads(2)
+mkl.set_num_threads(1)
 
 def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None, finetune=False):
     '''Builds and evaluates a CNN on train_text, train_labels'''
@@ -284,7 +284,7 @@ def make_test_set_predictions(model_name_pattern, full_model, finetune=False):
     return test_set_files
 
 def get_DNN_model(config=False, n_out=6):
-    fixed_args = DNN.just_length()
+    fixed_args = DNN.shallow_CNN()
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data('test.csv')
     fixed_args['compilation_args']['optimizer'] = 'adam'
@@ -305,7 +305,7 @@ def make_average_predictions_from_fnames(file_names, rank_avg=True, model_name='
     joblib.dump(mean_predictions, '../predictions/test_set_{}.pkl'.format(model_name))
     hlp.write_model(mean_predictions)
 
-def make_average_DNN_test_set_predictions(model_name, rank_avg=True, finetune=False):
+def make_average_DNN_test_set_predictions(model_name, rank_avg=None, finetune=False):
     model = get_DNN_model(n_out=(1 if finetune else 6))
     file_names = make_test_set_predictions(model_name, model, finetune=finetune)
     make_average_predictions_from_fnames(file_names, rank_avg=rank_avg, model_name=model_name)
@@ -346,6 +346,21 @@ def stack_ensembling(predictions_col_dict, clf_func, train_y):
         final_estimator_dict[col] = final_estimator
     return estimator_list, score_list, final_estimator_dict
 
+def average_list_of_lists(list_of_lists):
+    new_list = []
+    model_count = 0
+    for sublist in list_of_lists:
+        if len(sublist) > 1:
+            predictions = np.vstack([joblib.load('../predictions/{}.pkl'.format(model))[None] for model in sublist]).mean(axis=0)
+            predictions_test = np.vstack([joblib.load('../predictions/test_set_{}.pkl'.format(model))[None] for model in sublist]).mean(axis=0)
+            joblib.dump(predictions, '../predictions/average_model_{}.pkl'.format(model_count))
+            joblib.dump(predictions_test, '../predictions/test_set_average_model_{}.pkl'.format(model_count))
+            new_list.append('average_model_{}'.format(model_count))
+            model_count += 1
+        else:
+            new_list.append(sublist[0])
+    return new_list
+
 def test_meta_models(model_name_list, meta_features=None, rank=True):
     from scipy.special import logit, expit
     from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier
@@ -373,16 +388,16 @@ def test_meta_models(model_name_list, meta_features=None, rank=True):
                   'n_estimators': [5, 15, 25, 50, 100, 150], #number of trees, change it to 1000 for better results
                   'seed': [1337]}
 
-    lgbclf = lgb.LGBMClassifier(metric="auc", boosting_type="gbdt")
-    parameters_lgb ={'max_depth' : [3,4], 'n_estimators' : [125, 200],
-            'num_leaves' :[8, 10, 13],
+    lgbclf = lgb.LGBMClassifier(metric="auc", boosting_type="gbdt", n_jobs=1)
+    parameters_lgb ={'max_depth' : [3], 'n_estimators' : [100, 125, 150],
+            'num_leaves' :[10],
             'learning_rate' : [0.1],
             'feature_fraction' : [0.45],
-            'colsample_bytree' : [0.45],
+            'colsample_bytree' : [0.45, 0.3],
             'bagging_fraction' : [0.8],
             'bagging_freq' : [5],
             'reg_lambda':[0.2]}
-    gridsearch_lgb = partial(GridSearchCV, lgbclf, parameters_lgb, n_jobs=2,
+    gridsearch_lgb = partial(GridSearchCV, lgbclf, parameters_lgb, n_jobs=6,
                        cv=6,
                        scoring='roc_auc',
                        verbose=2, refit=True)
@@ -514,11 +529,20 @@ def meta_model_to_test_set(meta_dict, **kwargs):
     return predictions
 
 if __name__=='__main__':
-    models_to_use = ['cval_0218-1903', 'cval_0221-1635', 'cval_0222-1623', 'cval_0223-1022', 'cval_0223-1838', 'cval_0224-2227', 'finetuned_huge_finetune', 'one_layer_gru']#, 'shallow_CNN']
-    meta_models = test_meta_models(models_to_use, rank=None)
-    joblib.dump(meta_models, 'fit_no_rank_full_meta_models.pkl')
-    predictions_test = apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=False)
-    predictions_test_lgb = apply_meta_models(meta_models['lgb'][2], models_to_use, rank_cv=False)
+    models_to_use = ['cval_0218-1903', 'cval_0221-1635', 'cval_0223-1022', 'cval_0223-1838', 'cval_0224-2227', 'finetuned_huge_finetune', 'shallow_relu_CNN']
+#    make_average_test_set_predictions('shallow_CNN')
+    make_average_DNN_test_set_predictions('shallow_relu_CNN')
+    train_text, _ = pre.load_data()
+    hier_models = [['cval_0218-1903','cval_0219-0917','cval_0220-1042','huge_channel_dropout','huge_finetune','finetuned_huge_finetune'],
+                   ['shallow_relu_CNN'],
+                   ['cval_0221-1635'],
+                   ['cval_0223-1838'],
+                   ['cval_0224-2227']]
+    models_to_use = average_list_of_lists(hier_model)
+    meta_models = test_meta_models(models_to_use, rank=None)#, meta_features=feature_engineering.compute_features(train_text))
+    joblib.dump(meta_models, 'fit_lgb_avg_meta_models.pkl')
+#    predictions_test = apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=False)
+#    predictions_test_lgb = apply_meta_models(meta_models['lgb'][2], models_to_use, rank_cv=False)
 #    test_tfidf_models()
 #    report_ensembling(['cval_0218-1903', 'cval_0219-0917', 'cval_0220-1042', 'cval_0221-1635', 'cval_0222-1621'], 'attention_huge_trainable_tfidf')
 #    estimator_list, score_list = stack_ensembling(['cval_0218-1903', 'cval_0215-1830', 'cval_0219-0917', 'cval_0220-1042'], 'attention_and_huge_ensemble')

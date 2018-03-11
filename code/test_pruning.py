@@ -31,11 +31,8 @@ callbacks_list = [checkpoint, early] #early
 fit_args = {'batch_size' : 128, 'epochs' : 20,
                   'validation_split' : 0.2, 'callbacks' : callbacks_list}
 
-# for now use only english as model
-train_per_language = pre.load_data(language=False)
-train_text, train_y = train_per_language['babel']
-test_per_language = pre.load_data('test.csv', language=False)
-test_text, _ = test_per_language['babel']
+train_text, train_labels = pre.load_data()
+test_text, _ = pre.load_data('test.csv')
 
 def test_pruning(sentence, tokenizer_full, tokenizer_pruned, embedding_matrix_full, embedding_matrix_pruned):
     '''Tests tokens in a tokenized sentence maps to the same words in both tokenizers AND

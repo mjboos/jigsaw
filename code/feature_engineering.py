@@ -89,10 +89,10 @@ def contains_bad_word2(row):
 feature_mapping_dict = {
         'count_symbol' : count_symbol,
         'bad_word' : contains_bad_word,
-        'bad_word2' : contains_bad_word2,
-        'count_capitals' : count_capitals,
+#        'bad_word2' : contains_bad_word2,
+#        'count_capitals' : count_capitals,
         'proportion_capitals' : proportion_capitals,
-        'num_unique_words' : num_unique_words,
+#        'num_unique_words' : num_unique_words,
         'proportion_unique_words' : proportion_unique_words}
 
 def compute_features(text_df, which_features=None):
