@@ -166,7 +166,7 @@ def make_training_set_preds(model, train_data, train_y, split=0.2):
 
 def dump_trials(trials, fname=''):
     import time
-    joblib.dump(trials, '../validation_logs/trial_{}_{}.json'.format(fname, time.strftime("%m%d-%H%M")))
+    joblib.dump(trials, '../validation_logs/trial_{}_{}.pkl'.format(fname, time.strftime("%m%d-%H%M")))
 
 def update_embedding_vec(word_dict, path):
     other_words = get_fasttext_embedding(path)

@@ -346,7 +346,7 @@ def simple_net(trainable=False, prune=True):
     return model_params
 
 def shallow_CNN(trainable=False, prune=True):
-    model_func = partial(models.CNN_shallow, n_filters=96, kernel_sizes=[3,4,5], dropout=0.3, dropout_embed=0.3, act='relu')
+    model_func = partial(models.CNN_shallow, n_filters=64, kernel_sizes=[3,4,5], dropout=0.5, dropout_embed=0.5, act=None)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,

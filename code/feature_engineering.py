@@ -3,6 +3,7 @@
 from __future__ import division
 import numpy as np
 import pandas as pd
+from functools import partial
 import matplotlib.pyplot as plt
 import joblib
 import pandas as pd, numpy as np
@@ -15,6 +16,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 import string
 import langid
 import preprocessing as pre
+import models
 
 bad_word_dict = joblib.load('bad_words_misspellings.pkl')
 some_bad_words = joblib.load('some_bad_words.pkl')
@@ -86,8 +88,16 @@ def contains_bad_word2(row):
     match = re.search(bad_word_regex2, row)
     return match is not None
 
+def NMF_features():
+    from sklearn.decomposition import NMF
+    train_text, _ = pre.load_data()
+    test_text, _ = pre.load_data('test.csv')
+    tfidf = models.get_tfidf_model_model()
+
+
 feature_mapping_dict = {
-        'count_symbol' : count_symbol,
+        'count_exclamation' : count_symbol,
+        'count_question' : partial(count_symbol, symbol='?'),
         'bad_word' : contains_bad_word,
 #        'bad_word2' : contains_bad_word2,
 #        'count_capitals' : count_capitals,

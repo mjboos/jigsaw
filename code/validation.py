@@ -13,6 +13,7 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.model_selection import cross_val_score, KFold, train_test_split
 import helpers as hlp
+from sklearn.linear_model import LogisticRegression
 import models
 import preprocessing as pre
 import json
@@ -27,6 +28,8 @@ import DNN
 import copy
 import mkl
 mkl.set_num_threads(1)
+
+memory = joblib.Memory(cachedir='/home/mboos/joblib')
 
 def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None, finetune=False):
     '''Builds and evaluates a CNN on train_text, train_labels'''
@@ -122,7 +125,7 @@ def model_validate(X, y, model, cv=6, model_name=None, save=True):
     kfold = KFold(n_splits=cv, shuffle=False)
     if model_name is None:
         model_name = 'cval_{}'.format(time.strftime("%m%d-%H%M"))
-    predictions, scores, estimators = zip(*joblib.Parallel(n_jobs=6)(joblib.delayed(predict_parallel)(X, y, train, test, clone(model)) for train, test in kfold.split(X)))
+    predictions, scores, estimators = zip(*joblib.Parallel(n_jobs=2)(joblib.delayed(predict_parallel)(X, y, train, test, clone(model)) for train, test in kfold.split(X)))
     score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
     if save:
         predictions = np.vstack(predictions)
@@ -130,6 +133,57 @@ def model_validate(X, y, model, cv=6, model_name=None, save=True):
         joblib.dump(score_dict, '../scores/{}.pkl'.format(model_name))
         joblib.dump(estimators, '../models/{}.pkl'.format(model_name))
     return score_dict
+
+def evaluate_lgbm(X, y, fixed_args, kwargs, model_name=None):
+    import lightgbm as lgb
+    tfidf_args = {key:val for key, val in fixed_args['tfidf'].iteritems()}
+    tfidf_args.update(kwargs.get('tfidf', {}))
+    tfidf = models.get_tfidf_model(**tfidf_args)
+    new_dict = {key:val for key, val in fixed_args.items()}
+    new_dict.pop('tfidf')
+    new_dict.update(kwargs)
+    new_dict.pop('tfidf')
+    model = MultiOutputClassifier(lgb.LGBMClassifier(**new_dict))
+    train_X = tfidf.transform(X)
+    return model_validate(train_X, y, model, model_name=model_name, save=False)
+
+def char_analyzer(text):
+    """
+    This is used to split strings in small lots
+    I saw this in an article (I can't find the link anymore)
+    so <talk> and <talking> would have <Tal> <alk> in common
+    """
+    tokens = text.split()
+    return [token[i: i + 3] for token in tokens for i in range(len(token) - 2)]
+
+def get_tfidf_features(train_text, tfidf_args):
+    return models.get_tfidf_model(**tfidf_args).transform(train_text)
+
+def get_char_tfidf_features(train_text, char_tfidf_args):
+    return models.get_tfidf_model(**char_tfidf_args).transform(train_text)
+
+def get_tfidf_word_char_stack_features(train_text, tfidf_args, char_tfidf_args):
+    from scipy import sparse
+    tfidf_features = get_tfidf_features(train_text, tfidf_args)
+    char_tfidf_features = get_char_tfidf_features(train_text, char_tfidf_args)
+    meta_ft = sparse.csr_matrix(feature_engineering.compute_features(train_text))
+    conc_ft = sparse.hstack([tfidf_features, char_tfidf_features, meta_ft])
+    return conc_ft
+
+def evaluate_stacking_model_logreg(train_text, y, fixed_args, kwargs, model_name=None):
+    tfidf_args = {key:val for key, val in fixed_args['tfidf'].iteritems()}
+    tfidf_args.update(kwargs.get('tfidf', {}))
+    char_tfidf_args = {key:val for key, val in fixed_args['char_tfidf'].iteritems()}
+    char_tfidf_args.update(kwargs.get('char_tfidf', {}))
+    train_X = get_tfidf_word_char_stack_features(train_text, tfidf_args, char_tfidf_args)
+    new_dict = {key:val for key, val in fixed_args.items()}
+    new_dict.pop('tfidf')
+    new_dict.pop('char_tfidf')
+    new_dict.update(kwargs)
+    new_dict.pop('tfidf')
+    new_dict.pop('char_tfidf')
+    model = MultiOutputClassifier(LogisticRegression(**new_dict))
+    return model_validate(train_X, y, model, model_name=model_name, save=False)
 
 def evaluate_nbsvm(X, y, fixed_args, kwargs, model_name=None):
     tfidf_args = {key:val for key, val in fixed_args['tfidf'].iteritems()}
@@ -211,13 +265,13 @@ def hyperopt_tfidf_model(model_name, model_function, space, fixed_args):
     test_text, _ = pre.load_data('test.csv')
 
     # remove keys that are in space from fixed_args
-    all_search_space_keys = space.keys() + list(*[space[key].keys() for key in space if isinstance(space[key], dict)])
+#    all_search_space_keys = space.keys() + list(*[space[key].keys() for key in space if isinstance(space[key], dict)])
 #    fixed_args = {key : val for key, val in fixed_args.iteritems() if key not in all_search_space_keys}
     # freeze all constant parameters
     frozen_model_func = partial(model_function, train_text, train_y, fixed_args, model_name=model_name)
 
     trials = Trials()
-    best = fmin(frozen_model_func, space=space, algo=tpe.suggest, max_evals=20, trials=trials)
+    best = fmin(frozen_model_func, space=space, algo=tpe.suggest, max_evals=50, trials=trials)
     hlp.dump_trials(trials, fname=model_name)
     return best
 
@@ -241,14 +295,40 @@ def do_hyperparameter_search():
 #            'hidden_rnn' : hp.quniform('hidden_rnn', 32, 96, 16),
 #            'hidden_dense' : hp.quniform('hidden_dense', 16, 256, 16)}}
     from hyperopt.pyll.base import scope
-    tfidf_search_space = {'tfidf' : {'ngram_range' : hp.choice('ngram', [(1,2), (1,1), (1,3)]),
-                                     'stop_words' : hp.choice('stopwords', ['english', None]),
-                                     'min_df' : scope.int(hp.quniform('mindf', 3, 100, 5))},
-                           'C' : hp.uniform('C', 0.0, 2.0)}
-    tfidf_fixed = {'tfidf' : {'strip_accents' : 'unicode'}}
+    tfidf_search_space = {#'ngram_range' : hp.choice('ngram', [(1,2), (1,1)]),
+#                                     'stop_words' : hp.choice('stopwords', ['english', None]),
+                                     'min_df' : scope.int(hp.quniform('mindf', 3, 200, 10))}
+    logreg_search_space = {'tfidf' : tfidf_search_space, 'char_tfidf' : {},
+                        'C' : hp.uniform('C', 1e-3, 10.),
+                        'penalty' : hp.choice('penalty' , ['l1', 'l2']),
+#                        'class_weight' : hp.choice('class_weight', ['balanced', None])
+                        }
+
+    lgb_search_space ={'tfidf' : tfidf_search_space,
+#            'max_depth' : hp.choice('max_depth', [2,3,4]),
+#            'class_weight' : hp.choice('class_weight', ['balanced', None]),
+            'n_estimators' : scope.int(hp.quniform('n_est', 25, 500, 25)),
+#            'num_leaves' : scope.int(hp.quniform('num_leaves', 5, 20, 3)),
+#            'feature_fraction' : hp.uniform('feature_fraction', 0.3, 0.8),
+#            'colsample_bytree' : hp.uniform('colsample', 0.3, 0.8),
+#            'bagging_fraction' : hp.uniform('bagging_fraction', 0.6, 0.9),
+#            'bagging_freq' : hp.choice('bagging_freq', [3,5,7]),
+            'reg_lambda' : hp.loguniform('reg_lambda', 1e-1, 7),
+            'reg_alpha' : hp.loguniform('reg_alpha', 1e-1, 7)}
+    lgb_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.9, 'ngram_range' : (1,2)}, 'boosting_type' : 'gbdt', 'n_jobs' : 1, 'metric' : 'auc', 'num_leaves' : 9,
+            'feature_fraction' : 0.64, 'max_depth' : 2,
+            'colsample_bytree' : 0.44,
+            'bagging_fraction' : 0.61,
+            'bagging_freq' : 7}
+    logreg_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.9}}
+    logreg_char_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.9, 'stop_words' : None, 'ngram_range' : (1,2)},
+            'char_tfidf' : {'max_features' : 60000, 'ngram_range' : (1,3), 'tokenizer' : char_analyzer, 'sublinear_tf':True}}
     token_models_to_test = {
-            'nbsvm' : (evaluate_nbsvm, tfidf_search_space, tfidf_fixed)}
-#            'DNN' : (DNN_model_validate, DNN_search_space, DNN.simple_attention())}
+            'lr_word_char_stack' : (evaluate_stacking_model_logreg, logreg_search_space, logreg_char_fixed)
+#            'nbsvm' : (evaluate_nbsvm, logreg_search_space, logreg_fixed)
+#            'lgbm2' : (evaluate_lgbm, lgb_search_space, lgb_fixed)
+#            'DNN' : (DNN_model_validate, DNN_search_space, DNN.simple_attention())
+             }
     for model_name, (func, space, fixed_args) in token_models_to_test.iteritems():
         best = hyperopt_tfidf_model(model_name, func, space, fixed_args)
         joblib.dump(best, 'best_{}.pkl'.format(model_name))
@@ -256,13 +336,31 @@ def do_hyperparameter_search():
 def test_tfidf_models():
     from sklearn.model_selection import GridSearchCV
     from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier
-    from sklearn.linear_model import LogisticRegressionCVA
-    tfidf = models.get_tfidf_model()
+    from sklearn.linear_model import LogisticRegressionCV
+    import lightgbm as lgb
+    #TODO: test if min_df = 100 better
+    tfidf_params = {'ngram_range' : (1,2), 'stop_words' : None, 'max_df' : 0.9, 'min_df' : 100}
+    logreg_params = {'C' : 7}
+    lgb_params ={'max_depth' : 2,
+#            'class_weight' : hp.choice('class_weight', ['balanced', None]),
+            'n_estimators' : 325,
+            'num_leaves' : 9,
+            'feature_fraction' : 0.64,
+            'colsample_bytree' : 0.44,
+            'bagging_fraction' : 0.61,
+            'bagging_freq' : 7,
+            'reg_lambda' : 10,
+            'reg_alpha' : 10}
+#    lgbclf = lgb.LGBMClassifier(metric="auc", boosting_type="gbdt", n_jobs=1, **lgb_params)
+    tfidf = models.get_tfidf_model(**tfidf_params)
     train_text, train_y = pre.load_data()
     train_X = tfidf.transform(train_text)
-    tfidf_based = {'NB' : MultiOutputClassifier(models.NBMLR(dual=True, C=4))}
+    tfidf_based = {#'lightgbm_larger' : MultiOutputClassifier(lgbclf)}
+            'NBSVM' : MultiOutputClassifier(models.NBMLR(dual=True, **logreg_params))}
 #                       'extra_trees' : ExtraTreesClassifier(),
 #                       'gbc' : MultiOutputClassifier(GradientBoostingClassifier())}
+    for model_name in tfidf_based.keys():
+        joblib.dump(tfidf, '../models/tfidf_preprocessing_{}.pkl'.format(model_name))
     score_dict = { model_name : model_validate(train_X, train_y, clf, model_name=model_name) for model_name, clf in tfidf_based.items()}
     return score_dict
 
@@ -295,11 +393,13 @@ def test_models():
     kwargs['tokenizer'] = frozen_tokenizer
     DNN_model_validate({'main_input':train_text}, {'main_output':train_y, 'aux_output':aux_task}, fit_args, fixed_args, kwargs, cv=6, model_name='shallow_relu_CNN', finetune=False)
 
-def make_average_general_test_set_predictions(model_name, rank_avg=True):
+def make_average_general_test_set_predictions(model_name, rank_avg=None):
     import glob
     estimators = joblib.load('../models/{}.pkl'.format(model_name))
     test_text, _ = pre.load_data('test.csv')
-    tfidf = models.get_tfidf_model()
+    tfidf_params = {'ngram_range' : (1,2), 'stop_words' : None, 'max_df' : 0.9, 'min_df' : 100}
+    tfidf = models.get_tfidf_model(**tfidf_params)
+#    tfidf = joblib.load('../models/tfidf_preprocessing_{}.pkl'.format(model_name))
     test_tfidf = tfidf.transform(test_text)
     predictions = np.concatenate([hlp.preds_to_norm_rank(hlp.predict_proba_conc(estimator, test_tfidf), cols=rank_avg)[...,None] for estimator in estimators], axis=-1).mean(axis=-1)
     joblib.dump(predictions, '../predictions/test_set_{}.pkl'.format(model_name))
@@ -353,7 +453,7 @@ def get_DNN_model(config=False, n_out=6):
     model = models.Embedding_Blanko_DNN(config=config, **fixed_args)
     return model
 
-def make_average_predictions_from_fnames(file_names, rank_avg=True, model_name='overall_name'):
+def make_average_predictions_from_fnames(file_names, rank_avg=None, model_name='overall_name'):
     test_set_predictions = np.concatenate([hlp.preds_to_norm_rank(joblib.load(fname), cols=rank_avg)[..., None] for fname in file_names], axis=-1)
     mean_predictions = test_set_predictions.mean(axis=-1)
     joblib.dump(mean_predictions, '../predictions/test_set_{}.pkl'.format(model_name))
@@ -415,7 +515,24 @@ def average_list_of_lists(list_of_lists):
             new_list.append(sublist[0])
     return new_list
 
-def test_meta_models(model_name_list, meta_features=None, rank=True):
+def evaluate_joint_meta_models(model_name_list, model_func, fixed_args, kwargs, model_name='evaluate_gen', meta_features=None, rank=None, refit=False, save=False, test_set=False):
+    model_name_list = sorted(model_name_list)
+    new_dict = {key:val for key, val in fixed_args.items()}
+    new_dict.update(kwargs)
+    predictions = get_prediction_mat(model_name_list)
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    if meta_features is not None:
+        predictions = np.hstack([predictions, meta_features])
+    clf = MultiOutputClassifier(model_func(**new_dict))
+    _, train_y = pre.load_data()
+    scores = model_validate(predictions, train_y, clf, model_name=model_name, save=save)
+    scores['model_names'] = model_name_list
+    if refit:
+        clf.fit(predictions, train_y)
+        joblib.dump(clf, '../meta_models/meta_{}.pkl'.format(model_name))
+    return result_dict
+
+def test_meta_models(model_name_list, meta_features=None, rank=None):
     from scipy.special import logit, expit
     from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier
     from sklearn.linear_model import LogisticRegressionCV
@@ -455,16 +572,13 @@ def test_meta_models(model_name_list, meta_features=None, rank=True):
                        cv=6,
                        scoring='roc_auc',
                        verbose=2, refit=True)
-    classifier_dict = {'logistic_regression' : LogisticRegressionCV,
-                       'lgb' : gridsearch_lgb}
+    classifier_dict = {'logistic_regression' : LogisticRegressionCV}
+#                       'lgb' : gridsearch_lgb}
 #                        'xgb' : clf_xgb}
 #                       'extra_trees' : partial(GridSearchCV, ExtraTreesClassifier(), {'n_estimators' : [5, 10, 15]}),
 #                       'gbc' : partial(GridSearchCV, GradientBoostingClassifier(), {'n_estimators' : [30], 'max_depth' : [2, 3]})}
 
     _, train_y = pre.load_data()
-#    prediction_dict = {model_name : joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
-#    prediction_dict = {key:hlp.split_to_norm_rank(val, rank) for key, val in prediction_dict.iteritems()}
-#    prediction_dict = {key:hlp.preds_to_norm_rank(val) for key, val in prediction_dict.iteritems()}
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions_col_dict = get_prediction_col_dict(model_name_list)
     if meta_features is not None:
@@ -473,6 +587,15 @@ def test_meta_models(model_name_list, meta_features=None, rank=True):
     result_dict = { meta_model : stack_ensembling(predictions_col_dict, clf_func, train_y) for meta_model, clf_func in classifier_dict.iteritems()}
     result_dict['model_names'] = model_name_list
     return result_dict
+
+def get_prediction_mat(model_name_list, rank=None, test=False):
+    if not test:
+        prediction_dict = {model_name :joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
+    else:
+        prediction_dict = {model_name :joblib.load('../predictions/test_set_{}.pkl'.format(model_name)) for model_name in model_name_list}
+    prediction_dict = {key:hlp.split_to_norm_rank(val, rank) for key, val in prediction_dict.iteritems()}
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    return np.concatenate([prediction_dict[model][...,None] for model in sorted(model_name_list)], axis=-1)
 
 def get_prediction_col_dict(model_name_list, rank=None):
     prediction_dict = {model_name :joblib.load('../predictions/{}.pkl'.format(model_name)) for model_name in model_name_list}
@@ -582,25 +705,37 @@ def meta_model_to_test_set(meta_dict, **kwargs):
     predictions = {col:np.hstack([data[:,None] for data in data_col]) for col, data_col in predictions.iteritems()}
     return predictions
 
+@memory.cache
+def get_meta_features(which=None):
+    from sklearn.decomposition import LatentDirichletAllocation, NMF
+    train_text, _ = pre.load_data()
+    test_text, _ = pre.load_data()
+    if which is None:
+        meta_train = feature_engineering.compute_features(train_text)
+        tfidf = models.get_tfidf_model()
+        tfidf_train = tfidf.transform(pd.concat([train_text,test_text]))
+        meta_lda = LatentDirichletAllocation(n_components=10).fit(tfidf_train).transform(tfidf.transform(train_text))
+    elif which is 'test':
+        meta_train = feature_engineering.compute_features(test_text)
+        tfidf = models.get_tfidf_model()
+        tfidf_train = tfidf.transform(pd.concat([train_text,test_text]))
+        meta_lda = LatentDirichletAllocation(n_components=10).fit(tfidf_train).transform(tfidf.transform(test_text))
+    return np.hstack([meta_train, meta_lda])
+
 if __name__=='__main__':
     models_to_use = ['cval_0218-1903', 'cval_0221-1635', 'cval_0223-1022', 'cval_0223-1838', 'cval_0224-2227', 'finetuned_huge_finetune', 'shallow_relu_CNN']
-#    make_average_test_set_predictions('shallow_CNN')
-#    make_average_DNN_test_set_predictions('shallow_relu_CNN')
-#    train_text, _ = pre.load_data()
     hier_models = [['cval_0218-1903','cval_0219-0917','cval_0220-1042','huge_channel_dropout','huge_finetune','finetuned_huge_finetune'],
-                   ['shallow_relu_CNN'],
+                   ['shallow_relu_CNN', 'shallow_CNN'],
                    ['cval_0221-1635'],
                    ['cval_0223-1838'],
                    ['cval_0224-2227']]
     do_hyperparameter_search()
-#    models_to_use = average_list_of_lists(hier_model)
-#    meta_models = test_meta_models(models_to_use, rank=None)#, meta_features=feature_engineering.compute_features(train_text))
+#    models_to_use = average_list_of_lists(hier_models)
+#    meta_models = test_meta_models(models_to_use, rank=None)#, meta_features=get_meta_features())
 #    joblib.dump(meta_models, 'fit_lgb_avg_meta_models.pkl')
 #    predictions_test = apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=False)
-#    predictions_test_lgb = apply_meta_models(meta_models['lgb'][2], models_to_use, rank_cv=False)
+#    meta_models = joblib.load('fit_lgb_avg_meta_models.pkl')
+#    predictions_test_lgb = apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=False, meta_features=get_meta_features('test'))
+#    hlp.write_model(predictions_test_lgb)
 #    test_tfidf_models()
-#    report_ensembling(['cval_0218-1903', 'cval_0219-0917', 'cval_0220-1042', 'cval_0221-1635', 'cval_0222-1621'], 'attention_huge_trainable_tfidf')
-#    estimator_list, score_list = stack_ensembling(['cval_0218-1903', 'cval_0215-1830', 'cval_0219-0917', 'cval_0220-1042'], 'attention_and_huge_ensemble')
-#    for model in ['cval_0215-1830']:
-#        make_average_test_set_predictions(model)
 #    test_models()
