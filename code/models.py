@@ -21,7 +21,7 @@ from keras.utils import to_categorical
 from keras.layers import Dense, Input, GlobalMaxPooling1D
 import tensorflow as tf
 from keras import backend
-from keras.layers import Conv1D, MaxPooling1D, Embedding, Reshape, Activation, Lambda, SpatialDropout1D
+from keras.layers import Conv1D, MaxPooling1D, Embedding, Reshape, Activation, Lambda, SpatialDropout1D, Flatten
 from keras.models import Model
 from keras.layers import Dense, Embedding, Input
 from keras import optimizers
@@ -140,7 +140,8 @@ def get_tfidf_model(ngram_range=(1,2), tokenizer=None, min_df=0.005, max_df=0.9,
         tokenizer = tokenize
     train_text, train_y = pre.load_data()
     test_text, _ = pre.load_data()
-    tfidf = TfidfVectorizer(ngram_range=ngram_range, tokenizer=tokenizer, min_df=min_df, max_df=max_df, strip_accents=strip_accents, use_idf=use_idf, smooth_idf=smooth_idf, sublinear_tf=sublinear_tf, **kwargs).fit(pd.concat([train_text, test_text]))
+    tfidf = TfidfVectorizer(ngram_range=ngram_range, tokenizer=tokenizer, min_df=min_df, max_df=max_df, strip_accents=strip_accents, use_idf=use_idf, smooth_idf=smooth_idf, sublinear_tf=sublinear_tf, **kwargs).fit(train_text)
+#            pd.concat([train_text, test_text]))
     return tfidf
 
 def keras_token_model(model_fuction=None, max_features=20000, maxlen=100, embed_size=128):
@@ -239,7 +240,8 @@ def prune_matrix_and_tokenizer(embedding_matrix, tokenizer, replace_words=True,
             tokenizer.word_index[word] = tokenizer.word_index[repl_word]
         if debug:
             return prune_zero_vectors(embedding_matrix), tokenizer, replace_dict
-    return prune_zero_vectors(embedding_matrix), tokenizer 
+    return prune_zero_vectors(embedding_matrix), tokenizer
+
 def reorder_tokenizer_rank(tokenizer):
     # now reorder ranks
     import operator
@@ -501,6 +503,76 @@ class Embedding_Blanko_DNN(BaseEstimator):
         else:
             X = self.tokenizer.transform(X)
         return self.model.predict(X)
+
+def squash(x, axis=-1):
+    # s_squared_norm is really small
+    # s_squared_norm = K.sum(K.square(x), axis, keepdims=True) + K.epsilon()
+    # scale = K.sqrt(s_squared_norm)/ (0.5 + s_squared_norm)
+    # return scale * x
+    s_squared_norm = K.sum(K.square(x), axis, keepdims=True)
+    scale = K.sqrt(s_squared_norm + K.epsilon())
+    return x / scale
+
+class Capsule(Layer):
+    def __init__(self, num_capsule, dim_capsule, routings=3, kernel_size=(9, 1), share_weights=True,
+                 activation='default', **kwargs):
+        super(Capsule, self).__init__(**kwargs)
+        self.num_capsule = num_capsule
+        self.dim_capsule = dim_capsule
+        self.routings = routings
+        self.kernel_size = kernel_size
+        self.share_weights = share_weights
+        if activation == 'default':
+            self.activation = squash
+        else:
+            self.activation = Activation(activation)
+
+    def build(self, input_shape):
+        super(Capsule, self).build(input_shape)
+        input_dim_capsule = input_shape[-1]
+        if self.share_weights:
+            self.W = self.add_weight(name='capsule_kernel',
+                                     shape=(1, input_dim_capsule,
+                                            self.num_capsule * self.dim_capsule),
+                                     # shape=self.kernel_size,
+                                     initializer='glorot_uniform',
+                                     trainable=True)
+        else:
+            input_num_capsule = input_shape[-2]
+            self.W = self.add_weight(name='capsule_kernel',
+                                     shape=(input_num_capsule,
+                                            input_dim_capsule,
+                                            self.num_capsule * self.dim_capsule),
+                                     initializer='glorot_uniform',
+                                     trainable=True)
+
+    def call(self, u_vecs):
+        if self.share_weights:
+            u_hat_vecs = K.conv1d(u_vecs, self.W)
+        else:
+            u_hat_vecs = K.local_conv1d(u_vecs, self.W, [1], [1])
+
+        batch_size = K.shape(u_vecs)[0]
+        input_num_capsule = K.shape(u_vecs)[1]
+        u_hat_vecs = K.reshape(u_hat_vecs, (batch_size, input_num_capsule,
+                                            self.num_capsule, self.dim_capsule))
+        u_hat_vecs = K.permute_dimensions(u_hat_vecs, (0, 2, 1, 3))
+        # final u_hat_vecs.shape = [None, num_capsule, input_num_capsule, dim_capsule]
+
+        b = K.zeros_like(u_hat_vecs[:, :, :, 0])  # shape = [None, num_capsule, input_num_capsule]
+        for i in range(self.routings):
+            b = K.permute_dimensions(b, (0, 2, 1))  # shape = [None, input_num_capsule, num_capsule]
+            c = K.softmax(b)
+            c = K.permute_dimensions(c, (0, 2, 1))
+            b = K.permute_dimensions(b, (0, 2, 1))
+            outputs = self.activation(K.batch_dot(c, u_hat_vecs, [2, 2]))
+            if i < self.routings - 1:
+                b = K.batch_dot(outputs, u_hat_vecs, [2, 3])
+
+        return outputs
+
+    def compute_output_shape(self, input_shape):
+        return (None, self.num_capsule, self.dim_capsule)
 
 def weighted_binary_crossentropy(y_true, y_pred, weights):
     return tf.keras.backend.mean(tf.multiply(tf.keras.backend.binary_crossentropy(y_true, y_pred), weights), axis=-1)
@@ -799,6 +871,26 @@ def RNN_dropout_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rn
     x = Dense(n_out, activation="sigmoid", name='main_output')(x)
     return x, None
 
+#TODO: with concatenating
+def DNN_capsule(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout_dense=0.2, dropout_p=0.5, num_caps=10, routings=5, dim_caps=16, n_out=6):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+#    embed_layer = SpatialDropout1D(dropout_dense)(x)
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout_p)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+    x = Capsule(num_capsule=num_caps, dim_capsule=dim_caps, routings=routings,
+                      share_weights=True)(x)
+    # output_capsule = Lambda(lambda x: K.sqrt(K.sum(K.square(x), 2)))(capsule)
+    x = Flatten()(x)
+    x = Dropout(dropout_p)(x)
+    x = Dense(n_out, activation="sigmoid", name='main_output')(x)
+    return x, None
+
 def RNN_attention(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=48, rnn_func=None, dropout=0.5, dropout_dense=0.5, input_len=500, train_embedding=False,n_out=6):
     if rnn_func is None:
         rnn_func = CuDNNLSTM
@@ -983,6 +1075,28 @@ def RNN_stop_update_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=None, r
         x = Dense(int(hidden_dense), activation='relu')(x)
         x = Dropout(dropout)(x)
     x = Dense(n_out, activation="sigmoid", name='main_output')(x)
+    return x, None
+
+def RNN_conc_multiclass(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=None, rnn_func=None, dropout=0.5, n_out=6):
+    if rnn_func is None:
+        rnn_func = CuDNNLSTM
+    if not isinstance(hidden_rnn, list):
+        hidden_rnn = [hidden_rnn] * no_rnn_layers
+    if len(hidden_rnn) != no_rnn_layers:
+        raise ValueError('list of recurrent units needs to be equal to no_rnn_layers')
+    vals = []
+    for rnn_size in hidden_rnn:
+        x = Dropout(dropout)(x)
+        x = Bidirectional(rnn_func(int(rnn_size), return_sequences=True))(x)
+        vals.append(x)
+    x = concatenate([GlobalAveragePooling1D()(x)] + [GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+#    x = concatenate([GlobalMaxPool1D()(val) for val in vals] + [Lambda(lambda x : x[:,-1, :])(val) for val in vals])
+    x = Dropout(dropout)(x)
+#    x = BatchNormalization(x)
+    if hidden_dense is not None:
+        x = Dense(int(hidden_dense), activation='relu')(x)
+        x = Dropout(dropout)(x)
+    x = Dense(1, activation="softmax", name='main_output')(x)
     return x, None
 
 def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=None, rnn_func=None, dropout=0.5,n_out=6):

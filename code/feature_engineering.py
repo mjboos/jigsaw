@@ -76,13 +76,22 @@ def proportion_unique_words(row):
 def language_identity(row):
     return langid.classify(row)[0]
 
-bad_word_regex = '(' + '|'.join([r'\b'+bw+r'\b' for bw in some_bad_words])+')'
+bad_word_regex = '(' + '|'.join([r'\b'+bw+r'\b' for bw in some_bad_words2])+')'
+
+def count_bad_word2(row):
+    match = re.findall(bad_word_regex2, row)
+    return len(match)
+
+
+def count_bad_word(row):
+    match = re.findall(bad_word_regex, row)
+    return len(match)
 
 def contains_bad_word(row):
     match = re.search(bad_word_regex, row)
     return match is not None
 
-bad_word_regex2 = '(' + '|'.join(some_bad_words+list(np.unique(bad_word_dict.keys())))+')'
+bad_word_regex2 = '(' + '|'.join(some_bad_words2+list(np.unique(bad_word_dict.keys())))+')'
 
 def contains_bad_word2(row):
     match = re.search(bad_word_regex2, row)
@@ -94,16 +103,23 @@ def NMF_features():
     test_text, _ = pre.load_data('test.csv')
     tfidf = models.get_tfidf_model_model()
 
+def len_comment(row):
+    return len(row.split(' '))
+
+def avg_word_length(row):
+    return np.mean([len(word) for word in row.split(' ')])
 
 feature_mapping_dict = {
+        'length' : len_comment,
+        'word_length' : avg_word_length,
         'count_exclamation' : count_symbol,
         'count_question' : partial(count_symbol, symbol='?'),
-        'bad_word' : contains_bad_word,
-#        'bad_word2' : contains_bad_word2,
-#        'count_capitals' : count_capitals,
-        'proportion_capitals' : proportion_capitals,
-#        'num_unique_words' : num_unique_words,
-        'proportion_unique_words' : proportion_unique_words}
+        'bad_word' : count_bad_word,
+        'bad_word2' : count_bad_word2,
+        'count_capitals' : count_capitals,
+#        'proportion_capitals' : proportion_capitals,
+        'num_unique_words' : num_unique_words}
+#        'proportion_unique_words' : proportion_unique_words}
 
 def compute_features(text_df, which_features=None):
     if which_features:

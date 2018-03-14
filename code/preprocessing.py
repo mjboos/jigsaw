@@ -114,6 +114,10 @@ def clean_comment(text, replace_misspellings=True):
     s = re.sub(r"\'ve", " have ", s, flags=re.IGNORECASE)
     s = re.sub(r"can't", "cannot ", s, flags=re.IGNORECASE)
     s = re.sub(r"won't", "will not ", s, flags=re.IGNORECASE)
+    s = re.sub(r"weren't", "were not ", s, flags=re.IGNORECASE)
+    s = re.sub(r"don't", "do not", s, flags=re.IGNORECASE)
+    s = re.sub(r"it's", "it is", s, flags=re.IGNORECASE)
+    s = re.sub(r"doesn't", "does not", s, flags=re.IGNORECASE)
     s = re.sub(r"i'm", "i am ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'re", " are ", s, flags=re.IGNORECASE)
     s = re.sub(r"\'d", " would ", s, flags=re.IGNORECASE)
@@ -151,7 +155,7 @@ def clean_comment(text, replace_misspellings=True):
 
 @memory.cache
 def data_preprocessing(df, replace_misspellings=True):
-    df['comment_text'].fillna(' ', inplace=True)
+    df['comment_text'].fillna('', inplace=True)
     clean_comment_dummy = partial(clean_comment, replace_misspellings=replace_misspellings)
     df['comment_text'] = df['comment_text'].apply(clean_comment_dummy)
     return df
