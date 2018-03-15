@@ -102,6 +102,34 @@ def sparse_to_dense(X):
 def predict_proba_conc(estimator, X):
     return np.concatenate([preds[:,1][:,None] for preds in estimator.predict_proba(X)], axis=-1)
 
+def fasttext_binary_labels_to_preds(labels, predictions):
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    col_labels = ['__label__{}'.format(col) for col in cols]
+    y = np.zeros((len(labels), 6))
+    for i, (lbl, pred) in enumerate(zip(labels, predictions)):
+        pred_probs = []
+        for col in cols:
+            wh_pos = np.where(np.array(lbl)=='__label__{} '.format(col))
+            wh_neg = np.where(np.array(lbl)=='__label__not_{} '.format(col))
+            prob_pos = wh_pos[0][0] if len(wh_pos[0]) > 0 else 0.
+            prob_neg = wh_neg[0][0] if len(wh_neg[0]) > 0 else 0.
+            final_prob = prob_pos / (prob_pos+prob_neg) if prob_pos > 0. and prob_neg > 0. else 0.
+            pred_probs.append(final_prob)
+        y[i] = np.array(pred_probs)
+    return y
+
+def fasttext_labels_to_preds(labels, predictions):
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+    col_labels = ['__label__{}'.format(col) for col in cols]
+    y = np.zeros((len(labels), 6))
+    for i, (lbl, pred) in enumerate(zip(labels, predictions)):
+        pred_probs = []
+        for col in col_labels:
+            wh = np.where(np.array(lbl)==col)
+            pred_probs.append(wh[0][0] if len(wh[0]) > 0 else 0.)
+        y[i] = np.array(pred_probs)
+    return y
+
 @memory.cache
 def get_glove_embedding(glove_path):
     embeddings_index = {}
@@ -113,6 +141,24 @@ def get_glove_embedding(glove_path):
         embeddings_index[word] = coefs
     f.close()
     return embeddings_index
+
+def make_fasttext_txt(train_text, train_y):
+    from sklearn.model_selection import KFold
+    kf = KFold(n_splits=6)
+    train_text = train_text.str.replace('\n', ' ')
+    cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+
+    indicator = [''.join(['__label__{} '.format(col) if y_i == 1 else '__label__not_{} '.format(col) for col, y_i in zip(cols, y) ]) for y in train_y]
+#    indicator = [''.join(['__label__{} '.format(col) for col, y_i in zip(cols, y) if y_i == 1]) for y in train_y]
+#    indicator = [ind if len(ind)>0 else '__label__fine ' for ind in indicator]
+    indicator = np.array(indicator)
+    for i, (train, test) in enumerate(kf.split(train_y)):
+        all_train = [ind + train + '\n' for ind, train in zip(indicator[train], train_text[train])]
+        all_test = [ind + train + '\n' for ind, train in zip(indicator[test], train_text[test])]
+        with open('../supervised_text_for_ft_cv_{}.txt'.format(i), 'w+') as fl:
+            fl.writelines(all_train)
+        with open('../supervised_test_text_for_ft_cv_{}.txt'.format(i), 'w+') as fl:
+            fl.writelines(all_test)
 
 @memory.cache
 def get_fasttext_embedding(fasttext_path):

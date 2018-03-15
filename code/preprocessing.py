@@ -109,7 +109,7 @@ def clean_comment(text, replace_misspellings=True):
     text = ud.normalize('NFD', text.encode('utf-8').decode('utf-8'))
     text = text.lower()
     text = re.sub(r'[^\x00-\x7f]', r' ' , text)
-#    text = re.sub(r'[\n\r]', r' ', text)
+    text = re.sub(r'[\n\r]', r' ', text)
     s = re.sub(r"what's", "what is ", text, flags=re.IGNORECASE)
     s = re.sub(r"\'ve", " have ", s, flags=re.IGNORECASE)
     s = re.sub(r"can't", "cannot ", s, flags=re.IGNORECASE)

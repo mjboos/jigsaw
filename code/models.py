@@ -134,7 +134,7 @@ import re, string
 re_tok = re.compile('([{}“”¨«»®´·º½¾¿¡§£₤‘’])'.format(string.punctuation))
 def tokenize(s): return re_tok.sub(r' \1 ', s).split()
 
-def get_tfidf_model(ngram_range=(1,2), tokenizer=None, min_df=0.005, max_df=0.9, strip_accents='unicode',
+def get_tfidf_model(ngram_range=(1,2), tokenizer=None, min_df=5, max_df=0.9, strip_accents='unicode',
         use_idf=1, smooth_idf=1, sublinear_tf=1, **kwargs):
     if tokenizer is None:
         tokenizer = tokenize

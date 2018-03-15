@@ -109,16 +109,44 @@ def len_comment(row):
 def avg_word_length(row):
     return np.mean([len(word) for word in row.split(' ')])
 
+def sentiment(row):
+    from textblob.en.sentiments import PatternAnalyzer
+    return PatternAnalyzer().analyze(row)[0]*10.
+
+def has_ip(row):
+    return '_ip_' in row
+
+def has_username(row):
+    return '_user_' in row
+
+def has_date(row):
+    return '_date_' in row
+
+def has_mail(row):
+    return '_mail_' in row
+
+def has_url(row):
+    return '_url_' in row
+
+def is_wikipedia(row):
+    return '( talk )' in row or '( utc )' in row or '( talk | email )' in row or 'talk page' in row
+
 feature_mapping_dict = {
         'length' : len_comment,
         'word_length' : avg_word_length,
         'count_exclamation' : count_symbol,
         'count_question' : partial(count_symbol, symbol='?'),
-        'bad_word' : count_bad_word,
-        'bad_word2' : count_bad_word2,
-        'count_capitals' : count_capitals,
+#        'bad_word' : count_bad_word,
+        'bad_word' : count_bad_word2,
+#        'count_capitals' : count_capitals,
 #        'proportion_capitals' : proportion_capitals,
-        'num_unique_words' : num_unique_words}
+        'num_unique_words' : num_unique_words,
+        'mail' : has_mail,
+        'url' : has_url,
+        'wiki' : is_wikipedia,
+        'ip' : has_ip,
+        'date' : has_date,
+        'sentiment' : sentiment}
 #        'proportion_unique_words' : proportion_unique_words}
 
 def compute_features(text_df, which_features=None):
