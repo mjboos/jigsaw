@@ -352,29 +352,23 @@ def validate_feature_model(model_name, model_function, space, fixed_params_file=
     hlp.dump_trials(trials, fname=model_name)
     return best
 
+#TODO: tfidf as pipeline object
 def do_skopt_hyperparameter_search():
     from skopt import BayesSearchCV
     from skopt.space import Real, Categorical, Integer
-
-    from sklearn.datasets import load_digits
-    from sklearn.svm import LinearSVC, SVC
-    from sklearn.pipeline import Pipeline
-    from sklearn.model_selection import train_test_split
-
-    X, y = load_digits(10, True)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
-
+    from sklearn.linear_model import LogisticRegression
+    from hyperopt.pyll.base import scope
     # pipeline class is used as estimator to enable 
     # search over different model types
-    pipe = Pipeline([
-        ('model', SVC())
+    estimator_meta = Pipeline([
+        ('model', LogisticRegression())
     ])
 
     # single categorical value of 'model' parameter is 
     # sets the model class
-    linsvc_search = {
-        'model': [LinearSVC(max_iter=10000)],
-        'model__C': (1e-6, 1e+6, 'log-uniform'),
+    logreg_search = {
+        'model': [LogisticRegression(dual=True)],
+        'model__C': Real(1e-6, 1e+6, 'log-uniform'),
     }
 
     # explicit dimension classes can be specified like this
@@ -385,35 +379,6 @@ def do_skopt_hyperparameter_search():
         'model__degree': Integer(1,8),
         'model__kernel': Categorical(['linear', 'poly', 'rbf']),
     }
-
-    opt = BayesSearchCV(
-        pipe,
-        [(svc_search, 20), (linsvc_search, 16)], # (parameter space, # of evaluations)
-    )
-
-    opt.fit(X_train, y_train)
-
-    print("val. score: %s" % opt.best_score_)
-    print("test score: %s" % opt.score(X_test, y_test))
-    from hyperopt.pyll.base import scope
-    tfidf_search_space = {#'ngram_range' : hp.choice('ngram', [(1,2), (1,1)]),
-#                                     'stop_words' : hp.choice('stopwords', ['english', None]),
-#                                     'min_df' : scope.int(hp.quniform('mindf', 3, 50, 10)),
-#                                     'max_features' : scope.int(hp.quniform(10000,300000,10000))
-                            }
-    logreg_search_space = {'tfidf' : tfidf_search_space, 'char_tfidf' : {'ngram_range' : hp.choice('ngram_range',[(2,6), (3,6)])},
-                        'C' : hp.uniform('C', 1e-3, 10.),
-                        'penalty' : hp.choice('penalty' , ['l1', 'l2']),
-#                        'class_weight' : hp.choice('class_weight', ['balanced', None])
-                        }
-    fasttext_search_space = {'lr' : hp.uniform('lr', 0.1, 1.),
-#                             'pretrainedVectors' : hp.choice('pretrained', ['', '../crawl-300d-2M.vec', 'wiki.en.vec']),
-                             'wordNgrams' : hp.choice('ngrams', [1,2,3,4,5]),
-                              'dim' : scope.int(hp.quniform('dim', 50, 300, 25)),
-                              'epoch': scope.int(hp.quniform('epoch', 10,50,5)),
-                              'minCount' : scope.int(hp.quniform('mincount', 1,10,1)),
-                              'neg' : scope.int(hp.quniform('neg', 3, 25, 3)),
-                              'loss' : hp.choice('loss', ['softmax', 'hs'])}
     lgb_search_space ={#'tfidf' : tfidf_search_space,
             'max_depth' : scope.int(hp.quniform('max_depth', 2, 15, 1)),
 #            'class_weight' : hp.choice('class_weight', ['balanced', None]),
@@ -460,19 +425,14 @@ def do_skopt_hyperparameter_search():
     logreg_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.95, 'min_df':5}}
     logreg_char_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.95, 'stop_words' : None, 'ngram_range' : (1,2)},
             'char_tfidf' : {'max_features' : 60000, 'analyzer' : 'char', 'sublinear_tf':True}}
-    token_models_to_test = {
-            'lgb_meta' : (evaluate_meta_model_lgbm, lgb_search_space, lgb_fixed_meta)
-#             'fasttext' : (evaluate_fasttext, fasttext_search_space, {})
-#            'lr_word_char_stack' : (evaluate_stacking_model_logreg, logreg_search_space, logreg_char_fixed)
-#            'lgb_word_stack' : (evaluate_stacking_model_lgbm, lgb_search_space, lgb_fixed)
-#            'nbsvm2' : (evaluate_nbsvm, logreg_search_space, logreg_fixed)
-#            'lgbm3' : (evaluate_lgbm, lgb_search_space, lgb_fixed)
-#            'DNN' : (DNN_model_validate, DNN_search_space, DNN.simple_attention())
-             }
-    for model_name, (func, space, fixed_args) in token_models_to_test.iteritems():
-        best = hyperopt_meta_model(model_name, func, space, fixed_args)
-        joblib.dump(best, 'best_{}.pkl'.format(model_name))
-
+    opt = BayesSearchCV(
+       estimator,
+        [(logreg_search, 5)], cv=6, scoring=roc_auc_score, refit=True)
+    _, train_y = pre.load_data()
+    X = get_meta_features()
+    clf = MultiOutputClassifier(opt).fit(X, train_y)
+    joblib.dump(clf, '../meta_skopt_test.pkl')
+    return clf
 
 def do_hyperparameter_search():
 #    DNN_search_space = {'model_function' : {'no_rnn_layers' : hp.choice('no_rnn_layers', [1,2]),
