@@ -365,7 +365,8 @@ def do_skopt_hyperparameter_search():
     from sklearn.pipeline import Pipeline
     from skopt import BayesSearchCV
     from skopt.space import Real, Categorical, Integer
-    from sklearn.linear_model import LogisticRegression
+    from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
+    from sklearn.decomposition import LatentDirichletAllocation, NMF
     from sklearn.preprocessing import FunctionTransformer
     import lightgbm as lgb
     from sklearn.decomposition import PCA
@@ -380,10 +381,23 @@ def do_skopt_hyperparameter_search():
         ('pca', FunctionTransformer()),
         ('model', LogisticRegression())
     ])
+    estimator_topic = Pipeline([
+        ('vectorizer', TfidfVectorizer(**{'strip_accents' : 'unicode', 'max_df':0.95, 'min_df':5, 'max_features' : 100000, 'stop_words' : 'english'})),
+        ('topic_extr', NMF()),
+        ('model', LogisticRegressionCV())])
     estimator_tfidf = Pipeline([('tfidf',TfidfVectorizer()),
             ('model', LogisticRegression())])
     # single categorical value of 'model' parameter is 
     # sets the model class
+    topic_search = {
+            'topic_extr__n_components' : Integer(3, 20),
+            'model' : LogisticRegressionCV()}
+    topic_gbc_search = {
+            'topic_extr__n_components' : Integer(3, 20),
+            'model' : GradientBoostingClassifier(),
+            'model__n_estimators' : Integer(50,200),
+            'model__subsample' : Real(0.5,1.0, prior='uniform')}
+#            'vectorizer__stop_words' : Categorical(['english', None]),
     logreg_search = {
 #        'transformer' : Categorical([FunctionTransformer(hlp.col_rank_features), FunctionTransformer()]),
         'pca' : Categorical([PCA(), FunctionTransformer()]),
@@ -431,10 +445,11 @@ def do_skopt_hyperparameter_search():
         'char_tfidf' : {'max_features' : 60000, 'analyzer' : 'char', 'sublinear_tf':True, 'ngram_range' : ()}}
     model_names = ['finetuned_huge_finetune', 'lightgbm', 'NBSVM2', 'capsule_net', 'shallow_relu_CNN', 'average_model_0', 'lgb_meta']
     opt = BayesSearchCV(
-       estimator_stack,
-        [(lgb_search, 50)], cv=6, scoring=roc_auc_scorer, refit=True, n_jobs=1)
-    clf = evaluate_joint_meta_models_skopt(model_names, MultiOutputClassifier(opt), model_name='lgb_ensembling', flatten=True)
-    joblib.dump(clf, '../meta_skopt_lgb_ensembling.pkl')
+       estimator_topic,
+        [(topic_search, 2), (topic_gbc_search, 1)], cv=6, scoring=roc_auc_scorer, refit=True, n_jobs=1)
+#    clf = evaluate_joint_meta_models_skopt(model_names, MultiOutputClassifier(opt), model_name='lgb_ensembling', flatten=True)
+    clf = skopt_text_search(opt)
+    joblib.dump(clf, '../topic_model.pkl')
     return clf
 
 def skopt_tfidf_char_stack_meta_search(opt, tfidf_args, char_tfidf_args):
@@ -442,6 +457,12 @@ def skopt_tfidf_char_stack_meta_search(opt, tfidf_args, char_tfidf_args):
     X = get_tfidf_word_char_stack_features(train_text, tfidf_args, char_tfidf_args)
     clf = MultiOutputClassifier(opt)
     clf.fit(X, train_y)
+    return clf
+
+def skopt_text_search(opt):
+    train_text, train_y = pre.load_data()
+    clf = MultiOutputClassifier(opt)
+    clf.fit(train_text, train_y)
     return clf
 
 def skopt_meta_search(opt):
@@ -735,7 +756,25 @@ def average_list_of_lists(list_of_lists):
             new_list.append(sublist[0])
     return new_list
 
-#TODO: fix for flatten=False
+#TODO: different stacking structures
+# structure 1: (the simplest)
+# stack independently for each class with or without meta features
+
+# structure 2: (the flat one)
+# stack independently for each class using predictions from all classes from all models
+
+# structure 3: (the hierarchical one)
+# like structure 1 but then a final "layer" where predictions are combined again (maybe meta features could be inserted only here)
+
+# structure 4: (messy hierarchical one)
+# TBD
+
+#TODO: wait until single class model is through, then check score and think about if you want to treat it as meta ft or not
+#TODO: one attention thingy with embedding and concatenate all of it. for 200 features
+#TODO: logreg (later LGB) on earlier "layer" with/without meta features
+#TODO: then use these predictions with an LGB later + meta features and see if it improves
+
+
 def evaluate_joint_meta_models_skopt(model_name_list, clf, model_name='evaluate_gen', meta_features=None, flatten=True, rank=None, save=False):
     from sklearn.base import clone
     model_name_list = sorted(model_name_list)
