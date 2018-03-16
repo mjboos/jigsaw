@@ -19,7 +19,7 @@ import preprocessing as pre
 import json
 from keras import optimizers
 from keras import backend as K
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, make_scorer
 import time
 import hyperopt
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
@@ -29,8 +29,12 @@ import DNN
 import copy
 import mkl
 mkl.set_num_threads(1)
-
 memory = joblib.Memory(cachedir='/home/mboos/joblib')
+
+def roc_auc_scorer_b(y_true, y_pred):
+    return roc_auc_score(y_true, y_pred[:, 1])
+
+roc_auc_scorer = make_scorer(roc_auc_scorer_b, needs_proba=True)
 
 def DNN_model_validate(X, y, fit_args, fixed_args, kwargs, cv=6, model_name=None, finetune=False):
     '''Builds and evaluates a CNN on train_text, train_labels'''
@@ -129,7 +133,7 @@ def model_validate(X, y, model, cv=6, model_name=None, save=True):
     kfold = KFold(n_splits=cv, shuffle=False)
     if model_name is None:
         model_name = 'cval_{}'.format(time.strftime("%m%d-%H%M"))
-    predictions, scores, estimators = zip(*joblib.Parallel(n_jobs=3)(joblib.delayed(predict_parallel)(X, y, train, test, clone(model)) for train, test in kfold.split(X)))
+    predictions, scores, estimators = zip(*joblib.Parallel(n_jobs=1)(joblib.delayed(predict_parallel)(X, y, train, test, clone(model)) for train, test in kfold.split(X)))
     score_dict = {'loss' : np.mean(scores), 'loss_fold' : scores, 'status' : STATUS_OK}
     if save:
         predictions = np.vstack(predictions)
@@ -219,19 +223,20 @@ def evaluate_stacking_model_lgbm(train_text, y, fixed_args, kwargs, model_name=N
     return model_validate(train_X, y, model, model_name=model_name, save=False)
 
 def evaluate_stacking_model_logreg(train_text, y, fixed_args, kwargs, model_name=None):
+    from sklearn.linear_model import LogisticRegressionCV
     tfidf_args = {key:val for key, val in fixed_args['tfidf'].iteritems()}
     tfidf_args.update(kwargs.get('tfidf', {}))
     char_tfidf_args = {key:val for key, val in fixed_args['char_tfidf'].iteritems()}
     char_tfidf_args.update(kwargs.get('char_tfidf', {}))
     train_X = get_tfidf_word_char_stack_features(train_text, tfidf_args, char_tfidf_args)
     new_dict = {key:val for key, val in fixed_args.items()}
-    new_dict.pop('tfidf')
-    new_dict.pop('char_tfidf')
+    new_dict.pop('tfidf', 0)
+    new_dict.pop('char_tfidf', 0)
     new_dict.update(kwargs)
-    new_dict.pop('tfidf')
-    new_dict.pop('char_tfidf')
-    model = MultiOutputClassifier(LogisticRegression(**new_dict))
-    return model_validate(train_X, y, model, model_name=model_name, save=False)
+    new_dict.pop('tfidf', 0)
+    new_dict.pop('char_tfidf', 0)
+    model = MultiOutputClassifier(LogisticRegressionCV(**new_dict))
+    return model_validate(train_X, y, model, model_name=model_name, save=True)
 
 def evaluate_nbsvm(X, y, fixed_args, kwargs, model_name=None):
     tfidf_args = {key:val for key, val in fixed_args['tfidf'].iteritems()}
@@ -352,47 +357,59 @@ def validate_feature_model(model_name, model_function, space, fixed_params_file=
     hlp.dump_trials(trials, fname=model_name)
     return best
 
+def on_step(optim_result):
+    print(optim_result)
+
 #TODO: tfidf as pipeline object
 def do_skopt_hyperparameter_search():
+    from sklearn.pipeline import Pipeline
     from skopt import BayesSearchCV
     from skopt.space import Real, Categorical, Integer
     from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import FunctionTransformer
+    import lightgbm as lgb
+    from sklearn.decomposition import PCA
     from hyperopt.pyll.base import scope
     # pipeline class is used as estimator to enable 
     # search over different model types
-    estimator_meta = Pipeline([
+    estimator = Pipeline([
         ('model', LogisticRegression())
     ])
-
+    estimator_stack = Pipeline([
+#        ('transformer', FunctionTransformer()),
+        ('pca', FunctionTransformer()),
+        ('model', LogisticRegression())
+    ])
+    estimator_tfidf = Pipeline([('tfidf',TfidfVectorizer()),
+            ('model', LogisticRegression())])
     # single categorical value of 'model' parameter is 
     # sets the model class
     logreg_search = {
-        'model': [LogisticRegression(dual=True)],
-        'model__C': Real(1e-6, 1e+6, 'log-uniform'),
+#        'transformer' : Categorical([FunctionTransformer(hlp.col_rank_features), FunctionTransformer()]),
+        'pca' : Categorical([PCA(), FunctionTransformer()]),
+        'model': [LogisticRegression()],
+        'model__C': Real(1e-6, 1e+2, 'log-uniform')
+#        'model__penalty' : Categorical(['l1', 'l2'])
     }
-
-    # explicit dimension classes can be specified like this
-    svc_search = {
-        'model': Categorical([SVC()]),
-        'model__C': Real(1e-6, 1e+6, prior='log-uniform'),
-        'model__gamma': Real(1e-6, 1e+1, prior='log-uniform'),
-        'model__degree': Integer(1,8),
-        'model__kernel': Categorical(['linear', 'poly', 'rbf']),
-    }
-    lgb_search_space ={#'tfidf' : tfidf_search_space,
-            'max_depth' : scope.int(hp.quniform('max_depth', 2, 15, 1)),
+    tfidf_fixed = {'strip_accents' : 'unicode', 'max_df':0.9, 'min_df':5, 'max_features' : 300000, 'stop_words':None, 'ngram_range' : (1,2)}
+    char_tfidf_fixed = {'max_features' : 60000, 'analyzer' : 'char', 'sublinear_tf':True, 'ngram_range' : (2,5)}
+    lgb_search ={
+#            'transformer' : Categorical([FunctionTransformer(hlp.col_rank_features), FunctionTransformer()]),
+            'pca' : Categorical([PCA(), FunctionTransformer()]),
+            'model' : [lgb.LGBMClassifier(silent=True, **{'boosting_type' : 'gbdt', 'n_jobs' : 1, 'metric' : 'auc', 'device' : 'gpu', 'nthread' : 2})],
+            'model__max_depth' : Integer(2, 15),
 #            'class_weight' : hp.choice('class_weight', ['balanced', None]),
-#            'n_estimators' : scope.int(hp.quniform('n_est', 100, 500, 25)),
-            'num_leaves' : scope.int(hp.quniform('num_leaves', 7, 50, 1)),
-            'min_data_in_leaf' : scope.int(hp.quniform('minleaf', 100, 10000, 50)),
-            'scale_pos_weight' : hp.uniform('scale_pos_weight', 1, 1000),
+            'model__n_estimators' : Integer(50, 700),
+            'model__num_leaves' : Integer(7, 50, ),
+            'model__min_data_in_leaf' : Integer(100, 10000),
+            'model__scale_pos_weight' : Real(1e-1, 1000, prior='log-uniform'),
 #            'feature_fraction' : hp.uniform('feature_fraction', 0.3, 0.8),
 #            'subsample' : hp.uniform('subsample', 0.4, 1.0),
-            'colsample_bytree' : hp.uniform('colsample', 0.4, 1.0),
-            'min_child_weight' : hp.uniform('min_child_weight', 1., 150.),
+            'model__colsample_bytree' : Real(0.4, 1.0),
+            'model__min_child_weight' : Real(1., 150.),
 #            'bagging_fraction' : hp.uniform('bagging_fraction', 0.5, 1.0),
 #            'bagging_freq' : scope.int(hp.choice('bagging_freq', 3,10,1)),
-#            'reg_lambda' : hp.choice('reg_lambda', [0., 1e-1, 1., 10., 100.]),
+            'model__reg_lambda' : Real(1e-3, 1e2, prior='log-uniform'),
 #            'reg_alpha' : hp.choice('reg_alpha', [0., 1e-1, 1., 10., 100.])
             }
     lgb_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.9, 'min_df':5, 'max_features' : 300000, 'stop_words':None, 'ngram_range' : (1,2)}, 'boosting_type' : 'gbdt', 'n_jobs' : 1, 'metric' : 'auc', 'device' : 'gpu',
@@ -408,30 +425,30 @@ def do_skopt_hyperparameter_search():
 #            'bagging_fraction' : 0.61,
 #            'bagging_freq' : 7
             }
-    lgb_fixed_meta = { 'boosting_type' : 'gbdt', 'n_jobs' : 1, 'metric' : 'auc', 'device' : 'gpu',
-#            'histogram_poolsize' : 2048,
-#            'num_leaves' : 9,
-            'is_unbalance' : False,
-#            'bagging_fraction' : 1.0,
-            'n_estimators' : 999999,
-            'pred_early_stop' : True,
-#            'max_depth' : 3,
-#            'min_data_in_leaf' : 5,
-#            'colsample_bytree' : 0.44,
-#            'bagging_fraction' : 0.61,
-#            'bagging_freq' : 7
-            }
 
     logreg_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.95, 'min_df':5}}
-    logreg_char_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.95, 'stop_words' : None, 'ngram_range' : (1,2)},
-            'char_tfidf' : {'max_features' : 60000, 'analyzer' : 'char', 'sublinear_tf':True}}
+    logreg_char_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.9, 'stop_words' : None, 'ngram_range' : (1,2)},
+        'char_tfidf' : {'max_features' : 60000, 'analyzer' : 'char', 'sublinear_tf':True, 'ngram_range' : ()}}
+    model_names = ['finetuned_huge_finetune', 'lightgbm', 'NBSVM2', 'capsule_net', 'shallow_relu_CNN', 'average_model_0', 'lgb_meta']
     opt = BayesSearchCV(
-       estimator,
-        [(logreg_search, 5)], cv=6, scoring=roc_auc_score, refit=True)
+       estimator_stack,
+        [(lgb_search, 50)], cv=6, scoring=roc_auc_scorer, refit=True, n_jobs=1)
+    clf = evaluate_joint_meta_models_skopt(model_names, MultiOutputClassifier(opt), model_name='lgb_ensembling', flatten=True)
+    joblib.dump(clf, '../meta_skopt_lgb_ensembling.pkl')
+    return clf
+
+def skopt_tfidf_char_stack_meta_search(opt, tfidf_args, char_tfidf_args):
+    train_text, train_y = pre.load_data()
+    X = get_tfidf_word_char_stack_features(train_text, tfidf_args, char_tfidf_args)
+    clf = MultiOutputClassifier(opt)
+    clf.fit(X, train_y)
+    return clf
+
+def skopt_meta_search(opt):
     _, train_y = pre.load_data()
     X = get_meta_features()
-    clf = MultiOutputClassifier(opt).fit(X, train_y)
-    joblib.dump(clf, '../meta_skopt_test.pkl')
+    clf = MultiOutputClassifier(opt)
+    clf.fit(X, train_y)
     return clf
 
 def do_hyperparameter_search():
@@ -504,9 +521,9 @@ def do_hyperparameter_search():
     logreg_char_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.95, 'stop_words' : None, 'ngram_range' : (1,2)},
             'char_tfidf' : {'max_features' : 60000, 'analyzer' : 'char', 'sublinear_tf':True}}
     token_models_to_test = {
-            'lgb_meta' : (evaluate_meta_model_lgbm, lgb_search_space, lgb_fixed_meta)
+#            'lgb_meta' : (evaluate_meta_model_lgbm, lgb_search_space, lgb_fixed_meta)
 #             'fasttext' : (evaluate_fasttext, fasttext_search_space, {})
-#            'lr_word_char_stack' : (evaluate_stacking_model_logreg, logreg_search_space, logreg_char_fixed)
+            'lr_word_char_stack' : (evaluate_stacking_model_logreg, logreg_search_space, logreg_char_fixed)
 #            'lgb_word_stack' : (evaluate_stacking_model_lgbm, lgb_search_space, lgb_fixed)
 #            'nbsvm2' : (evaluate_nbsvm, logreg_search_space, logreg_fixed)
 #            'lgbm3' : (evaluate_lgbm, lgb_search_space, lgb_fixed)
@@ -564,20 +581,25 @@ def int_to_binary(num):
     return np.array([int(b) for b in '{0:06b}'.format(num)])
 
 def make_multiclass(train_y):
-    from sklearn.preprocessing import LabelEncoder
+    from sklearn.preprocessing import LabelEncoder, OneHotEncoder
     binary_y = binary_to_int(train_y)
     smaller_binary = np.zeros_like(binary_y)
-    return LabelEncoder().fit_transform(smaller_binary)
+    unique_idx, counts = np.unique(binary_y, return_counts=True)
+    for i, co in zip(unique_idx, counts):
+        if co > 100:
+            smaller_binary[binary_y==i] = i
+    return OneHotEncoder().fit_transform(smaller_binary[:,None])
 
 def test_models():
     fit_args = {'batch_size' : 80, 'epochs' : 20,
                       'validation_split' : 0.2}
-    fixed_args = DNN.capsule_net()
     kwargs = {}
     train_text, train_y = pre.load_data()
-#    train_y = make_multiclass(train_y)
+    train_y = make_multiclass(train_y).toarray()
     test_text, _ = pre.load_data('test.csv')
-    aux_task = feature_engineering.compute_features(train_text, which_features=['bad_word'])
+    fixed_args = DNN.weird_multiclass(multiclass=train_y.shape[1])
+    fixed_args['n_out'] = train_y.shape[1]
+#    aux_task = feature_engineering.compute_features(train_text, which_features=['bad_word'])
 #    class_weights = hlp.get_class_weights(train_y)
 #    fixed_args['compilation_args']['loss']['main_output'] = make_loss_function(class_weights)
 #    fixed_args['compilation_args']['optimizer_args'] = {'clipnorm' : 1., 'lr' : 0.0005, 'beta_2' : 0.99}
@@ -588,7 +610,7 @@ def test_models():
 #    embedding = hlp.get_glove_embedding('../glove.twitter.27B.200d.txt')
     kwargs['embedding'] = embedding
     kwargs['tokenizer'] = frozen_tokenizer
-    DNN_model_validate({'main_input':train_text}, {'main_output':train_y, 'aux_output':aux_task}, fit_args, fixed_args, kwargs, cv=6, model_name='capsule_larger_net', finetune=False)
+    DNN_model_validate({'main_input':train_text}, {'main_output':train_y}, fit_args, fixed_args, kwargs, cv=6, model_name='weird_multiclass', finetune=False)
 
 def make_average_general_test_set_predictions(model_name, rank_avg=None):
     import glob
@@ -714,10 +736,9 @@ def average_list_of_lists(list_of_lists):
     return new_list
 
 #TODO: fix for flatten=False
-def evaluate_joint_meta_models_skopt(model_name_list, estimator, model_name='evaluate_gen', meta_features=None, flatten=True, rank=None, save=False):
+def evaluate_joint_meta_models_skopt(model_name_list, clf, model_name='evaluate_gen', meta_features=None, flatten=True, rank=None, save=False):
+    from sklearn.base import clone
     model_name_list = sorted(model_name_list)
-    new_dict = {key:val for key, val in fixed_args.items()}
-    new_dict.update(kwargs)
     _, train_y = pre.load_data()
     cols=['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
     predictions = hlp.logit(get_prediction_mat(model_name_list, rank=rank))
@@ -737,7 +758,7 @@ def evaluate_joint_meta_models_skopt(model_name_list, estimator, model_name='eva
             predictions_i = np.squeeze(predictions[:,i])
             if meta_features is not None:
                 predictions_i = np.hstack([predictions, meta_features])
-            clf_i = clone(clf).fit(predictions_i, train_y)
+            clf_i = clone(clf).fit(predictions_i, train_y[:,i])
             estimator_list.append(clf_i)
         if save:
             joblib.dump(estimator_list, '../meta_models/meta_{}.pkl'.format(model_name))
@@ -972,15 +993,20 @@ def get_meta_features(which=None):
     return np.hstack([meta_train, meta_lda])
 
 if __name__=='__main__':
-    models_to_use = ['cval_0218-1903', 'cval_0221-1635', 'cval_0223-1022', 'cval_0223-1838', 'cval_0224-2227', 'finetuned_huge_finetune', 'shallow_relu_CNN']
+    models_to_use = ['average_model_0', 'finetuned_huge_finetune', 'shallow_relu_CNN', 'NBSVM2', 'lightgbm', 'lgb_meta']
     hier_models = [['cval_0218-1903','cval_0219-0917','cval_0220-1042','huge_channel_dropout','huge_finetune','finetuned_huge_finetune'],
                    ['shallow_relu_CNN', 'shallow_CNN'],
 #                   ['cval_0221-1635'],
                    ['NBSVM'],
                    ['lightgbm']]
 #    make_average_DNN_test_set_predictions('capsule_net')
+#    get_meta_features('test')
 #    make_average_DNN_test_set_predictions('capsule_net', rank_avg=True)
-    do_hyperparameter_search()
+    logreg_char_fixed = {'tfidf' : {'strip_accents' : 'unicode', 'max_df':0.9, 'stop_words' : None, 'ngram_range' : (1,2)},
+        'char_tfidf' : {'max_features' : 60000, 'analyzer' : 'char', 'sublinear_tf':True, 'ngram_range' : (2,3)}}
+#    train_text, train_y = pre.load_data()
+#    evaluate_stacking_model_logreg(train_text, train_y, logreg_char_fixed, {}, model_name='logreg_charstack')
+#    bla = do_skopt_hyperparameter_search()
 #    models_to_use = average_list_of_lists(hier_models)
 #    meta_models = test_meta_models(models_to_use, rank=None)#, meta_features=get_meta_features())
 #    joblib.dump(meta_models, 'fit_lgb_avg_meta_models.pkl')
@@ -989,4 +1015,4 @@ if __name__=='__main__':
 #    predictions_test_lgb = apply_meta_models(meta_models['logistic_regression'][2], models_to_use, rank_cv=False, meta_features=get_meta_features('test'))
 #    hlp.write_model(predictions_test_lgb)
 #    test_tfidf_models()
-#    test_models()
+    test_models()

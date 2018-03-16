@@ -1096,7 +1096,7 @@ def RNN_conc_multiclass(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=None, rn
     if hidden_dense is not None:
         x = Dense(int(hidden_dense), activation='relu')(x)
         x = Dropout(dropout)(x)
-    x = Dense(1, activation="softmax", name='main_output')(x)
+    x = Dense(n_out, activation="softmax", name='main_output')(x)
     return x, None
 
 def RNN_conc(x, no_rnn_layers=2, hidden_rnn=48, hidden_dense=None, rnn_func=None, dropout=0.5,n_out=6):

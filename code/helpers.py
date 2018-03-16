@@ -57,6 +57,9 @@ def preds_to_norm_rank(predictions, cols=True):
     which_cols = np.array([i for i,col in enumerate(all_cols) if col in cols])
     return np.concatenate([norm_rank(preds)[:,None] if i in which_cols else preds[:,None] for i, preds in enumerate(predictions.T)], axis=-1)
 
+def col_rank_features(X):
+    return np.concatenate([norm_rank(x_col)[:,None] for x_col in X.T], axis=-1)
+
 def norm_rank(arr):
     from sklearn.preprocessing import minmax_scale
     return minmax_scale(rank(arr))

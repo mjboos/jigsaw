@@ -313,12 +313,12 @@ def simple_huge_1_layer_net(trainable=False, prune=True):
         'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.0005, 'clipnorm' : 1., 'clipvalue':1., 'beta_2':0.99}, 'loss':{'main_output': 'binary_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
-def weird_multiclass(trainable=False, prune=True):
-    model_func = partial(models.RNN_conc_multiclass, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=2, hidden_rnn=96, hidden_dense=None)
+def weird_multiclass(trainable=False, prune=True, multiclass=7):
+    model_func = partial(models.RNN_conc_multiclass, rnn_func=keras.layers.CuDNNGRU, no_rnn_layers=1, hidden_rnn=128, hidden_dense=None, n_out=multiclass)
     model_params = {
         'max_features' : 500000, 'model_function' : model_func, 'maxlen' : 500,
         'embedding_dim' : 300, 'trainable' : trainable, 'prune' : prune,
-        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1., 'clipvalue':1., 'beta_2':0.99}, 'loss':{'main_output': 'sparse_categorical_crossentropy'}, 'loss_weights' : [1.]}}
+        'compilation_args' : {'optimizer_func' : optimizers.Adam, 'optimizer_args' : {'lr' : 0.001, 'clipnorm' : 1., 'clipvalue':1., 'beta_2':0.99}, 'loss':{'main_output': 'categorical_crossentropy'}, 'loss_weights' : [1.]}}
     return model_params
 
 def capsule_net(trainable=False, prune=True):
